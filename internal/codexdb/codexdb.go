@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -334,4 +335,58 @@ func readSessionMeta(p string) (Thread, bool) {
 		return Thread{}, false
 	}
 	return Thread{ID: rec.Payload.ID, Cwd: rec.Payload.Cwd, From: "rollout"}, true
+}
+
+// RecentReadOnly 同 Recent，但保证不在 home 目录里创建或修改任何文件（用于官方 .codex 别名）：
+// 状态库连同 -wal 先复制到临时目录，在副本上查询；复制或查询失败就降级扫 sessions 目录（只读）。
+func RecentReadOnly(home, cwd string, limit int, same SamePathFunc) ([]Thread, string, error) {
+	db, ok := FindStateDB(home)
+	if !ok {
+		ts, err := recentFromRollouts(home, cwd, limit, same)
+		return ts, "没有状态库，已改为扫描 sessions 目录", err
+	}
+	tmp, err := os.MkdirTemp("", "acsw-ro-")
+	if err != nil {
+		ts, err2 := recentFromRollouts(home, cwd, limit, same)
+		return ts, "建临时目录失败：" + err.Error() + "；已改为扫描 sessions 目录", err2
+	}
+	defer os.RemoveAll(tmp)
+	cp := filepath.Join(tmp, filepath.Base(db))
+	note := ""
+	if err := copyFile(db, cp); err != nil {
+		note = "复制状态库失败：" + err.Error()
+	} else if fileExists(db + "-wal") {
+		if err := copyFile(db+"-wal", cp+"-wal"); err != nil {
+			note = "复制状态库 WAL 失败：" + err.Error()
+		}
+	}
+	if note == "" {
+		ts, n, err := recentFromDB(cp, cwd, limit, same)
+		if err == nil && n == "" {
+			return ts, "", nil
+		}
+		note = n
+		if err != nil {
+			note = "读状态库失败：" + err.Error()
+		}
+	}
+	ts, err := recentFromRollouts(home, cwd, limit, same)
+	return ts, note + "；已改为扫描 sessions 目录", err
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }

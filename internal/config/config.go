@@ -41,8 +41,20 @@ func (p Paths) SourcesDir() string           { return filepath.Join(p.Root, "sou
 func (p Paths) HomesDir() string             { return filepath.Join(p.Root, "home") }
 func (p Paths) SourceDir(name string) string { return filepath.Join(p.SourcesDir(), name) }
 func (p Paths) HomeDir(name string) string   { return filepath.Join(p.HomesDir(), name) }
-func (p Paths) MapFile() string              { return filepath.Join(p.Root, "map.toml") }
-func (p Paths) LockFile() string             { return filepath.Join(p.Root, ".acsw.lock") }
+
+// CodexHome 返回 home 实际交给 codex 的 CODEX_HOME：官方别名 home 为 alias_of，否则为 HomeDir(name)。
+// acsw codex、acsw last、status 都用它，别处不要自己拼路径。
+func (p Paths) CodexHome(name string, e HomeEntry) string {
+	if e.AliasOf != "" {
+		return e.AliasOf
+	}
+	return p.HomeDir(name)
+}
+func (p Paths) MapFile() string  { return filepath.Join(p.Root, "map.toml") }
+func (p Paths) LockFile() string { return filepath.Join(p.Root, ".acsw.lock") }
+
+// BackupDir 是根目录下的备份区（删除的 source 移到这里）。
+func (p Paths) BackupDir() string { return filepath.Join(p.Root, ".acsw-backup") }
 func (p Paths) SourceMetaFile(name string) string {
 	return filepath.Join(p.SourceDir(name), "acsw-source.toml")
 }
@@ -67,6 +79,9 @@ type Project struct {
 type HomeEntry struct {
 	Source  string    `toml:"source"`
 	Updated time.Time `toml:"updated,omitempty"`
+	// AliasOf 非空时，这个 home 是官方 CODEX_HOME（如 %USERPROFILE%\.codex）的只读别名：
+	// acsw codex 直接用该目录启动 codex，不注入 source/key；acsw 从不写入该目录。
+	AliasOf string `toml:"alias_of,omitempty"`
 }
 
 // Map 对应 map.toml。
@@ -260,6 +275,9 @@ func listDirs(dir string, needMeta bool, p Paths) ([]string, error) {
 }
 
 // Lock 取得根目录下的全局文件锁（跨进程）。超时返回错误。
+// ErrLockBusy 表示等锁超时：另一个 acsw 正在修改配置。
+var ErrLockBusy = errors.New("另一个 acsw 正在修改配置，请稍后再试")
+
 func Lock(p Paths, timeout time.Duration) (unlock func(), err error) {
 	if err := os.MkdirAll(p.Root, 0o755); err != nil {
 		return nil, fmt.Errorf("建根目录失败：%w", err)
@@ -275,7 +293,7 @@ func Lock(p Paths, timeout time.Duration) (unlock func(), err error) {
 			return func() { _ = fl.Unlock() }, nil
 		}
 		if time.Now().After(deadline) {
-			return nil, errors.New("另一个 acsw 正在修改配置，请稍后再试")
+			return nil, ErrLockBusy
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

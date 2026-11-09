@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,12 +76,9 @@ func AddOpenAILogin(p config.Paths, name, codexPath string, stdin io.Reader, std
 
 // AddCustom 建立 custom source，key 存凭据管理器。
 func AddCustom(p config.Paths, store cred.Store, name, baseURL, model, key string) error {
-	u, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return fmt.Errorf("--base-url %q 不是合法的 http(s) 地址", baseURL)
-	}
-	if strings.TrimSpace(model) == "" {
-		return errors.New("custom 类型需要 --model")
+	baseURL, model, err := validateCustom(baseURL, model)
+	if err != nil {
+		return err
 	}
 	key = strings.TrimSpace(key)
 	if key == "" {
@@ -94,7 +90,7 @@ func AddCustom(p config.Paths, store cred.Store, name, baseURL, model, key strin
 	if err := store.Set(cred.Target(name), key); err != nil {
 		return err
 	}
-	return config.SaveSource(p, name, &config.SourceMeta{Type: config.ProviderCustom, BaseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), Model: strings.TrimSpace(model), Created: time.Now()})
+	return config.SaveSource(p, name, &config.SourceMeta{Type: config.ProviderCustom, BaseURL: baseURL, Model: model, Created: time.Now()})
 }
 
 type authDoc struct {
