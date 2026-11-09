@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>acsw</title>
+<style>
+body{font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif;margin:20px;max-width:1000px}
+table{border-collapse:collapse;width:100%;margin:8px 0 20px}
+th,td{border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top}
+th{background:#f3f3f3}
+.err{color:#b00}.warn{color:#a60}.ok{color:#070}
+pre{background:#f7f7f7;padding:8px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<h2>acsw · agent cli switch</h2>
+<p>切换前请先退出该 home 里所有 codex。<label><input type="checkbox" id="dry"> 只预演（不改文件）</label>
+ <button onclick="load()">刷新</button></p>
+<h3>Home</h3>
+<table id="homes"><thead><tr><th>home</th><th>当前 source</th><th>provider</th><th>运行中</th><th>项目目录</th><th>切换到</th></tr></thead><tbody></tbody></table>
+<h3>Source</h3>
+<table id="sources"><thead><tr><th>source</th><th>类型</th><th>base_url / model</th><th>登录或 key</th><th>被哪些 home 使用</th></tr></thead><tbody></tbody></table>
+<h3>结果</h3>
+<pre id="out">（无）</pre>
+<script>
+const TOKEN = "{{.Token}}";
+let sources = [];
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+async function load(){
+  const r = await fetch("/api/status"); const d = await r.json();
+  if(!r.ok){document.getElementById("out").textContent = d.error; return;}
+  sources = d.sources;
+  const hb = document.querySelector("#homes tbody"); hb.innerHTML = "";
+  for(const h of d.homes){
+    const opts = sources.map(s=>`<option value="${esc(s.name)}"${s.name===h.source?" selected":""}>${esc(s.name)} (${esc(s.type)})</option>`).join("");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(h.home)}${h.problem?`<div class="err">${esc(h.problem)}</div>`:""}</td><td>${esc(h.source||"（未设置）")}</td><td>${esc(h.provider)}</td><td>${h.running}</td><td>${(h.projects||[]).map(esc).join("<br>")}</td>
+      <td><select>${opts}</select> <button>切换</button></td>`;
+    tr.querySelector("button").onclick = ()=>use(h.home, tr.querySelector("select").value);
+    hb.appendChild(tr);
+  }
+  const sb = document.querySelector("#sources tbody"); sb.innerHTML = "";
+  for(const s of sources){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(s.name)}</td><td>${esc(s.type)}</td><td>${esc(s.base_url)} ${esc(s.model)}</td><td>${s.has_login?"有":'<span class="err">缺</span>'}</td><td>${(s.used_by||[]).map(esc).join(", ")}</td>`;
+    sb.appendChild(tr);
+  }
+}
+async function use(home, source){
+  const dry = document.getElementById("dry").checked;
+  if(!dry && !confirm(`把 ${home} 切到 ${source}？`)) return;
+  const r = await fetch("/api/use",{method:"POST",headers:{"Content-Type":"application/json","X-ACSW-Token":TOKEN},body:JSON.stringify({home,source,dry_run:dry})});
+  const d = await r.json();
+  let t = r.ok ? (d.dry_run?"【预演】将要：\n":"已完成：\n") : "失败："+d.error+"\n";
+  (d.steps||[]).forEach((s,i)=>t+=`  ${i+1}. ${s}\n`);
+  (d.warnings||[]).forEach(s=>t+="  注意："+s+"\n");
+  if(d.backup_dir) t+="  备份目录："+d.backup_dir+"\n";
+  const o = document.getElementById("out"); o.textContent = t; o.className = r.ok?"ok":"err";
+  load();
+}
+load();
+</script>
+</body>
+</html>
