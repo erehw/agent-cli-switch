@@ -34,6 +34,9 @@ acsw source add plus1 --type openai                      # 以 CODEX_HOME=source
 acsw source add pro1  --type openai --from %USERPROFILE%\.codex   # 从现有 CODEX_HOME 复制 auth.json，不显示内容
 acsw source add api1  --type custom --base-url https://api.example.com/v1 --model gpt-5.x   # 提示输入 key，不回显
 acsw source list
+acsw source edit api1 --base-url <URL> --model <模型> --set-key   # 只改 custom；不写的项不改，在用的 home 自动重新应用
+acsw source rm api1 --yes                  # 只删 custom；有 home 在用就拒绝；key 删除、目录移到 .acsw-backup
+acsw source models api1                    # 只限 custom：用凭据管理器里的 key 请求 <base_url>/models，stdout 原样输出响应体
 acsw home add home1
 acsw home cmd home2                                      # 生成 home\home2\acsw-codex.cmd（给别的程序调用）
 acsw map home1 [项目目录]                                 # 不写目录就用当前目录；子目录也归 home1，最长前缀优先
@@ -41,7 +44,7 @@ acsw use home1 plus1 [--dry-run] [--strict]
 acsw codex [--home home1] [--expect-home home2] [codex 参数...]
 acsw run [codex] [...]                                   # 等同 acsw codex（兼容旧用法）
 acsw last [--home home1] [-n 5]
-acsw status
+acsw status [--json]                                      # --json：给程序读，格式见下
 acsw ui [--port 7799] [--open]
 ```
 
@@ -49,14 +52,103 @@ acsw ui [--port 7799] [--open]
 
 | 方式 | 命令/文件 | 适合 | 规则 |
 |---|---|---|---|
-| A01 | `home\<home>\acsw-codex.cmd`（`acsw home cmd` 生成） | 给别的程序填路径 | 当前目录必须已映射到该 home，否则拒绝（退出码 2） |
-| A02 | `acsw codex ...` | 自己在终端敲 | 按当前目录找 home；没映射就拒绝（退出码 2） |
+| A01 | `home\<home>\acsw-codex.cmd`（`acsw home cmd` 生成） | 给别的程序填路径 | 当前目录必须已映射到该 home，否则拒绝（退出码 99994001 或 99994002，见下文「退出码和错误 JSON」） |
+| A02 | `acsw codex ...` | 自己在终端敲 | 按当前目录找 home；没映射就拒绝（退出码 99994001） |
 
 - A01 的脚本内容等价于：`acsw codex --expect-home <home> %*`，并用 `@exit /b %ERRORLEVEL%` 传出退出码。脚本里写的是生成时 `acsw.exe` 的完整路径，不依赖 PATH。
 - `--expect-home` 不能用 `--home` 绕过：目录实际映射必须等于期望的 home。
 - `home=… source=…` 等提示走 stderr，stdout 只留给 codex，方便管道和外部程序解析。
 - codex 参数支持 `--` 分隔，也可不写 `--`（acsw 只认开头的 `--home` / `--expect-home`，其余原样交给 codex）。
 
+### 退出码和错误 JSON
+
+codex 正常启动后，acsw 原样返回 codex 自己的退出码，不额外输出任何东西。下面这些是 acsw **自己**出错时（codex 没启动，或者是其他子命令出错）的退出码，所有子命令都适用。定义在 `internal/exitcode`。
+
+| Windows 退出码 | kind | 含义 |
+|---|---|---|
+| 99994001 | `not_mapped` | 当前目录没有映射到任何 home |
+| 99994002 | `expect_home_mismatch` | 当前目录映射的 home 不是 `--expect-home` 指定的 |
+| 99994003 | `no_source` | home 还没指定 source |
+| 99994004 | `bad_args` | 用法错误、参数不对、命令不认识 |
+| 99994005 | `home_conflict` | `--home` 和 `--expect-home` 冲突 |
+| 99994006 | `home_not_found` | home 不存在或名称不合法 |
+| 99994007 | `source_invalid` | source 不存在、类型不对（比如对 openai 查模型），或元数据损坏 |
+| 99994008 | `home_readonly_alias` | home 是官方 .codex 的只读别名，拒绝 use 等写操作 |
+| 99995001 | `key_unreadable` | 凭据管理器里读不到 key |
+| 99995002 | `codex_not_found` | 找不到 codex（PATH 或 `ACSW_CODEX`） |
+| 99995003 | `lock_busy` | 等全局锁超时（10 秒），另一个 acsw 正在修改配置 |
+| 99995004 | `codex_start_failed` | codex 启动失败 |
+| 99995005 | `upstream_error` | 请求上游失败（`/models` 返回非 2xx、网络问题、超时） |
+| 99995999 | `other` | 其他 acsw 错误，比如 `source edit` 后有 home 没能重新应用 |
+
+acsw 自己出错时，stderr 的最后两行固定是：
+
+```
+acsw 错误：当前目录没有映射，期望 home home2。先运行：acsw map home2
+{"acsw_error":99994001,"kind":"not_mapped","msg":"当前目录没有映射，期望 home home2。先运行：acsw map home2","dir":"M:\\x","expect_home":"home2"}
+```
+
+- 最后一行是一个单行 JSON（UTF-8，以换行结尾），不含 key。
+- **固定字段**：`acsw_error`（本次实际退出码）、`kind`（上表中的字符串，只会新增、不会改名）、`msg`（和上面那行人读消息的正文相同）。
+- **可选上下文字段**：只在有值时出现，按字母顺序排列。`dir`（当前目录）、`home`（实际 home；mismatch 时是目录映射到的 home）、`expect_home`、`source`、`url`、`http_status`、`homes`（数组）。
+- 这个 JSON 行**总是输出**，不需要开关：它只出现在 acsw 自己出错时的 stderr 末尾，不影响 stdout，也不影响 codex 运行时的任何输出。人看的那行照样保留在它上面。
+- `acsw-codex.cmd` 用 `@exit /b %ERRORLEVEL%` 把退出码传出去，大码和 codex 自己的退出码都能原样传出（已实测）。
+- 非 Windows 平台退出码只有 0-255，所以沿用旧值：99994xxx 返回 2，99995xxx 返回 1；`acsw_error` 也是这个实际值，用 `kind` 区分具体错误。
+### `acsw status --json`
+
+stdout 只输出一个 JSON 对象（UTF-8，带缩进）；出错时 stdout 为空，错误写 stderr。不含任何 key，也不含 auth.json 内容。格式版本 `version` 目前是 1：以后只加字段不升版本，删除或改含义才升。
+
+```json
+{
+  "version": 1,
+  "root": "C:\\Users\\me\\agent-source\\codex",
+  "homes": [
+    {
+      "home": "home2",
+      "source": "api1",
+      "provider": "custom",
+      "base_url": "https://api.example.com/v1",
+      "model": "gpt-x",
+      "has_login": true,
+      "running": 0,
+      "projects": ["M:\\work\\proj"]
+    }
+  ],
+  "sources": [
+    { "name": "api1", "type": "custom", "base_url": "https://api.example.com/v1", "model": "gpt-x", "has_login": true, "used_by": ["home2"] }
+  ]
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `homes[].home` | home 名，按名称排序 |
+| `homes[].dir` | codex 实际用的 CODEX_HOME 绝对路径，和 `acsw codex` 设置的完全一样（同一个函数 `config.Paths.CodexHome` 算出）：普通 home 是 `<root>\home\<名字>`，官方别名 home 是 `alias_of`。codex 会话在 `<dir>\sessions`。**不要用 root 自己拼路径** |
+| `homes[].source` | 当前 source；未设置为 `""` |
+| `homes[].provider` | `openai` / `custom` / `official`（官方别名）；未设置 source 为 `""` |
+| `homes[].base_url`、`model` | 仅 custom 有 |
+| `homes[].has_login` | custom：凭据管理器里有 key；openai：source 有 auth.json；未设置 source 为 `null` |
+| `homes[].running` | acsw 登记的、仍在运行的 codex 个数 |
+| `homes[].projects` | 映射到这个 home 的项目目录（前缀），总是数组 |
+| `homes[].problem` | 有问题时才出现，比如 home 目录不存在 |
+| `homes[].alias_of` | 总会出现：官方别名 home 为官方 CODEX_HOME 的路径，普通 home 为 `""` |
+| `sources[]` | 全部 source：`name`、`type`、`base_url`/`model`（仅 custom）、`has_login`、`used_by`（总是数组） |
+### 官方 .codex 别名（home alias）
+
+可以把一个 home 声明成官方 CODEX_HOME（默认 `%USERPROFILE%\.codex`）的**只读别名**：
+
+```
+acsw home alias home1                      # 默认 %USERPROFILE%\.codex
+acsw home alias home1 D:\其他\.codex        # 指定目录
+acsw home alias home1 --off                # 取消
+```
+
+- 这个命令只改 `map.toml`（在 `[home.home1]` 下写 `alias_of = "..."`），必要时在 acsw 根目录下建 `home\home1\`，用来放运行登记。不建 junction，也不碰官方目录。
+- 不能设置别名的情况：home 正在用某个 source、目录不存在、目录和 acsw 根目录互相包含、同一个官方目录已经有别的别名、home 里有 codex 在跑。
+- **`acsw codex`**（包括 `--expect-home home1` 和 `acsw-codex.cmd`）：在映射到别名 home 的目录里运行时，`CODEX_HOME` 设为官方目录，不注入 source 和 key，codex 用官方目录里它自己的登录。acsw 照样会从环境里删掉 `OPENAI_API_KEY`、`ACSW_API_KEY` 等变量。退出码原样透传。
+- **`acsw last`**：从官方目录读最近的会话。状态库连同 `-wal` 先复制到临时目录，在副本上查询；失败时改为扫描 `sessions` 目录。不会在官方目录里打开或产生任何文件。
+- **acsw 从不写官方目录**：`acsw use <别名home> …`、网页上的切换都会被拒绝，退出码 99994008（`home_readonly_alias`）。运行登记放在 acsw 自己的 `home\<home>\.acsw-run`。
+- **`status`、`status --json`、网页**：这个 home 的 provider 显示为 `official`，并带 `alias_of`；`has_login` 只检查官方目录里有没有 auth.json，不读内容。网页上不能切换它的 source。
 ### `acsw use <home> <source>` 依次做什么
 
 1. 检查 home 是否空闲：`acsw codex` / `acsw run` 登记过的进程都已退出，否则拒绝。系统里如果还有不是 acsw 启动的 `codex.exe`，只给出提醒；加 `--strict` 时直接拒绝。
@@ -114,7 +206,7 @@ internal/web        acsw ui
 5. `acsw use home2 plus1` 应该被拒绝，提示 plus1 正被 home1 使用。
 6. 在项目1 下 `acsw codex`，用 Plus 正常对话一轮。退出后运行 `acsw last`，应能看到刚才的会话。**用 sqlite 工具看一下 `home1\state_5.sqlite` 的 `threads` 表结构，确认列名和 acsw 的假设一致。**
 7. 运行 codex 期间，在另一个窗口执行 `acsw use home1 api1`，应该被拒绝；`acsw status` 显示 home1 有 1 个在运行。
-8. `acsw home cmd home2`，用生成的 `acsw-codex.cmd --version` 在已映射目录应成功；在未映射目录应拒绝、退出码 2。
+8. `acsw home cmd home2`，用生成的 `acsw-codex.cmd --version` 在已映射目录应成功；在未映射目录应拒绝、退出码 99994001。
 9. `acsw ui --open`，确认页面能显示状态，也能预演。
 
 要调 API 的部分：
