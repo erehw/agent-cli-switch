@@ -8,8 +8,12 @@ body{font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif;margin:20px;max-width:
 table{border-collapse:collapse;width:100%;margin:8px 0 20px}
 th,td{border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top}
 th{background:#f3f3f3}
-.err{color:#b00}.warn{color:#a60}.ok{color:#070}
+.err{color:#b00}.warn{color:#a60}.ok{color:#070}.mut{color:#888}
 pre{background:#f7f7f7;padding:8px;white-space:pre-wrap}
+fieldset{margin:8px 0 20px}
+.launch{margin:2px 0 6px}.launch code{background:#f3f3f3;padding:1px 4px;font-size:12px;user-select:all}
+fieldset label{display:block;margin:4px 0}
+fieldset input[type=text],fieldset input[type=password]{width:420px}
 </style>
 </head>
 <body>
@@ -18,46 +22,155 @@ pre{background:#f7f7f7;padding:8px;white-space:pre-wrap}
  <button onclick="load()">刷新</button></p>
 <h3>Home</h3>
 <table id="homes"><thead><tr><th>home</th><th>当前 source</th><th>provider</th><th>运行中</th><th>项目目录</th><th>切换到</th></tr></thead><tbody></tbody></table>
+<div class="mut">「复制」只复制启动命令（进入项目目录后运行 acsw codex --expect-home &lt;该目录映射的 home&gt;），粘贴到终端运行；页面不会启动 codex。命令格式：<label><input type="radio" name="shell" value="cmd" onchange="setShell(this.value)"> cmd</label> <label><input type="radio" name="shell" value="ps" onchange="setShell(this.value)"> PowerShell</label></div>
 <h3>Source</h3>
-<table id="sources"><thead><tr><th>source</th><th>类型</th><th>base_url / model</th><th>登录或 key</th><th>被哪些 home 使用</th></tr></thead><tbody></tbody></table>
+<table id="sources"><thead><tr><th>source</th><th>类型</th><th>base_url / model</th><th>登录或 key</th><th>被哪些 home 使用</th><th>操作</th></tr></thead><tbody></tbody></table>
+<fieldset id="form">
+<legend id="formTitle">新增 custom source（API）</legend>
+<label>名称 <input type="text" id="f_name" autocomplete="off" placeholder="例如 api1"></label>
+<label>base_url <input type="text" id="f_base" autocomplete="off" placeholder="https://api.example.com/v1"></label>
+<label>model <input type="text" id="f_model" autocomplete="off"></label>
+<label>key <input type="password" id="f_key" autocomplete="new-password"> <span id="keyHint" class="mut">必填</span></label>
+<button onclick="save()">保存</button> <button onclick="resetForm()">取消 / 改为新增</button>
+<div class="mut">key 只存进系统凭据管理器，页面不显示。订阅登录（openai）类型这里不能改。</div>
+</fieldset>
 <h3>结果</h3>
 <pre id="out">（无）</pre>
 <script>
 const TOKEN = "{{.Token}}";
 let sources = [];
+let editing = "";
+let shell = (()=>{ try{ return localStorage.getItem("acsw.shell")==="ps" ? "ps" : "cmd"; }catch(e){ return "cmd"; } })();
+function setShell(v){ shell = v==="ps" ? "ps" : "cmd"; try{ localStorage.setItem("acsw.shell", shell); }catch(e){} load(); }
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function $(id){return document.getElementById(id)}
+async function post(url, body){
+  const r = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","X-ACSW-Token":TOKEN},body:JSON.stringify(body)});
+  let d = {}; try{ d = await r.json(); }catch(e){ d = {error:"响应不是 JSON（"+r.status+"）"}; }
+  return [r, d];
+}
+function show(text, ok){ const o=$("out"); o.textContent=text; o.className=ok?"ok":"err"; }
 async function load(){
   const r = await fetch("/api/status"); const d = await r.json();
-  if(!r.ok){document.getElementById("out").textContent = d.error; return;}
+  if(!r.ok){show(d.error,false); return;}
   sources = d.sources;
   const hb = document.querySelector("#homes tbody"); hb.innerHTML = "";
   for(const h of d.homes){
     const opts = sources.map(s=>`<option value="${esc(s.name)}"${s.name===h.source?" selected":""}>${esc(s.name)} (${esc(s.type)})</option>`).join("");
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${esc(h.home)}${h.problem?`<div class="err">${esc(h.problem)}</div>`:""}</td><td>${esc(h.source||"（未设置）")}</td><td>${esc(h.provider)}</td><td>${h.running}</td><td>${(h.projects||[]).map(esc).join("<br>")}</td>
-      <td><select>${opts}</select> <button>切换</button></td>`;
-    tr.querySelector("button").onclick = ()=>use(h.home, tr.querySelector("select").value);
+    tr.innerHTML = `<td>${esc(h.home)}${h.problem?`<div class="err">${esc(h.problem)}</div>`:""}</td><td>${h.alias_of?`官方别名<div class="mut">${esc(h.alias_of)}（只读）</div>`:esc(h.source||"（未设置）")}</td><td>${esc(h.provider)}</td><td>${h.running}</td><td class="proj">${(h.launches||[]).map((l,i)=>`<div class="launch"><div>${esc(l.dir)}</div>${l[shell]?`<button class="cp" data-i="${i}" title="${esc(l[shell])}">复制</button> <code>${esc(l[shell])}</code> <span class="cpok ok"></span>`:""}${l.warn?`<div class="warn">${esc(l.warn)}</div>`:""}</div>`).join("")}</td>
+      <td>${h.alias_of?`<span class="mut">官方目录别名，不能切换 source</span>`:`<select>${opts}</select> <button class="sw">切换</button>`}</td>`;
+    if(!h.alias_of) tr.querySelector("button.sw").onclick = ()=>use(h.home, tr.querySelector("select").value);
+    tr.querySelectorAll("button.cp").forEach(b=>{ b.onclick = ()=>copyCmd(h.launches[+b.dataset.i][shell], b.parentNode.querySelector(".cpok")); });
     hb.appendChild(tr);
   }
   const sb = document.querySelector("#sources tbody"); sb.innerHTML = "";
   for(const s of sources){
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${esc(s.name)}</td><td>${esc(s.type)}</td><td>${esc(s.base_url)} ${esc(s.model)}</td><td>${s.has_login?"有":'<span class="err">缺</span>'}</td><td>${(s.used_by||[]).map(esc).join(", ")}</td>`;
+    const ops = s.type==="custom" ? `<button class="m">查模型</button> <button class="e">编辑</button> <button class="d">删除</button>` : `<span class="mut">只读</span>`;
+    tr.innerHTML = `<td>${esc(s.name)}</td><td>${esc(s.type)}</td><td>${esc(s.base_url)} ${esc(s.model)}</td><td>${s.has_login?"有":'<span class="err">缺</span>'}</td><td>${(s.used_by||[]).map(esc).join(", ")}</td><td>${ops}</td>`;
+    if(s.type==="custom"){
+      tr.querySelector(".e").onclick = ()=>startEdit(s);
+      tr.querySelector(".d").onclick = ()=>del(s);
+      tr.querySelector(".m").onclick = ()=>models(s);
+    }
     sb.appendChild(tr);
   }
 }
+// 只把启动命令放进剪贴板，页面本身不会启动 codex。localhost 下 navigator.clipboard 不一定可用，失败就退回 execCommand。
+async function copyCmd(text, tip){
+  let ok = false;
+  try{ if(navigator.clipboard && window.isSecureContext){ await navigator.clipboard.writeText(text); ok = true; } }catch(e){}
+  if(!ok){
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.setAttribute("readonly",""); ta.style.position="fixed"; ta.style.opacity="0";
+    document.body.appendChild(ta); ta.select();
+    try{ ok = document.execCommand("copy"); }catch(e){ ok = false; }
+    document.body.removeChild(ta);
+  }
+  if(tip){
+    tip.className = ok ? "cpok ok" : "cpok err";
+    tip.textContent = ok ? "已复制" : "复制失败，请手动选中命令复制";
+    clearTimeout(tip._t); tip._t = setTimeout(()=>{tip.textContent="";}, 2000);
+  }
+}
+// 查模型：服务端代为请求 <base_url>/models（key 不出 acsw），这里只显示模型 id。
+async function models(s){
+  show(`正在查询 source ${s.name} 的模型列表…`, true);
+  const r = await fetch("/api/source/models",{method:"POST",headers:{"Content-Type":"application/json","X-ACSW-Token":TOKEN},body:JSON.stringify({name:s.name})});
+  const text = await r.text();
+  if(!r.ok){ let e = text; try{ e = JSON.parse(text).error || text; }catch(_){} show("查模型失败："+e, false); return; }
+  let ids = null;
+  try{ const d = JSON.parse(text); if(d && Array.isArray(d.data)) ids = d.data.map(x=>x && x.id).filter(x=>typeof x==="string"); }catch(_){}
+  if(ids && ids.length) show(`source ${s.name} 共 ${ids.length} 个模型：\n  ` + ids.join("\n  "), true);
+  else show(`source ${s.name} 的 /models 原始响应：\n` + text, true);
+}
+function resetForm(){
+  editing = "";
+  $("formTitle").textContent = "新增 custom source（API）";
+  $("f_name").value = ""; $("f_name").readOnly = false;
+  $("f_base").value = ""; $("f_model").value = ""; $("f_key").value = "";
+  $("keyHint").textContent = "必填";
+}
+function startEdit(s){
+  editing = s.name;
+  $("formTitle").textContent = "编辑 custom source：" + s.name + "（不能改名）";
+  $("f_name").value = s.name; $("f_name").readOnly = true;
+  $("f_base").value = s.base_url||""; $("f_model").value = s.model||""; $("f_key").value = "";
+  $("keyHint").textContent = "留空表示不改（当前：" + (s.has_login?"有":"缺") + "）";
+  $("f_base").focus();
+}
+async function save(){
+  const body = {name:$("f_name").value.trim(), base_url:$("f_base").value.trim(), model:$("f_model").value.trim(), key:$("f_key").value};
+  if(!body.name){show("请填名称",false); return;}
+  if(editing){
+    const s = sources.find(x=>x.name===editing);
+    const used = (s&&s.used_by||[]);
+    const metaChanged = s && (body.base_url!==(s.base_url||"") || body.model!==(s.model||""));
+    if(metaChanged && used.length && !confirm(`保存后会把在用的 home（${used.join(", ")}）重新应用一遍。继续？`)) return;
+    const [r,d] = await post("/api/source/edit", body);
+    $("f_key").value = "";
+    if(!r.ok){show("失败："+d.error,false); return;}
+    const res = d.result;
+    let t = `已保存 source ${res.name}：` + (res.meta_changed?"base_url/model 已改":"base_url/model 未变") + "，" + (res.key_changed?"key 已更新":"key 未改") + "\n";
+    (res.notes||[]).forEach(n=>t+="  "+n+"\n");
+    for(const h of res.homes||[]){
+      t += h.ok ? `  home ${h.home}：已重新应用\n` : `  home ${h.home}：未应用 —— ${h.error}\n`;
+      (h.warnings||[]).forEach(w=>t+="    注意："+w+"\n");
+      if(h.backup_dir) t += "    备份目录："+h.backup_dir+"\n";
+    }
+    show(t, d.all_homes_ok);
+    resetForm(); load();
+  }else{
+    if(!body.key){show("新增时 key 必填",false); return;}
+    const [r,d] = await post("/api/source/add", body);
+    $("f_key").value = "";
+    if(!r.ok){show("失败："+d.error,false); return;}
+    show(`已新增 source ${d.name}\n  `+(d.notes||[]).join("\n  "), true);
+    resetForm(); load();
+  }
+}
+async function del(s){
+  if((s.used_by||[]).length){ show(`source ${s.name} 正被 home ${s.used_by.join(", ")} 使用，先把这些 home 切到别的 source 再删`, false); return; }
+  if(!confirm(`删除 source ${s.name}？\n凭据管理器里的 key 会删除，目录移到备份区（.acsw-backup）。`)) return;
+  const [r,d] = await post("/api/source/delete", {name:s.name});
+  if(!r.ok){show("失败："+d.error,false); load(); return;}
+  show(`已删除 source ${s.name}\n  目录已移到：${d.backup_dir}`, true);
+  if(editing===s.name) resetForm();
+  load();
+}
 async function use(home, source){
-  const dry = document.getElementById("dry").checked;
+  const dry = $("dry").checked;
   if(!dry && !confirm(`把 ${home} 切到 ${source}？`)) return;
-  const r = await fetch("/api/use",{method:"POST",headers:{"Content-Type":"application/json","X-ACSW-Token":TOKEN},body:JSON.stringify({home,source,dry_run:dry})});
-  const d = await r.json();
+  const [r,d] = await post("/api/use",{home,source,dry_run:dry});
   let t = r.ok ? (d.dry_run?"【预演】将要：\n":"已完成：\n") : "失败："+d.error+"\n";
   (d.steps||[]).forEach((s,i)=>t+=`  ${i+1}. ${s}\n`);
   (d.warnings||[]).forEach(s=>t+="  注意："+s+"\n");
   if(d.backup_dir) t+="  备份目录："+d.backup_dir+"\n";
-  const o = document.getElementById("out"); o.textContent = t; o.className = r.ok?"ok":"err";
+  show(t, r.ok);
   load();
 }
+document.querySelectorAll('input[name=shell]').forEach(r=>{ r.checked = r.value===shell; });
 load();
 </script>
 </body>

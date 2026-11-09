@@ -2,11 +2,13 @@
 package web
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net"
 	"net/http"
@@ -14,6 +16,7 @@ import (
 
 	"acsw/internal/core"
 	"acsw/internal/home"
+	"acsw/internal/source"
 )
 
 //go:embed static/index.html
@@ -50,6 +53,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("POST /api/use", s.use)
+	mux.HandleFunc("POST /api/source/add", s.sourceAdd)
+	mux.HandleFunc("POST /api/source/edit", s.sourceEdit)
+	mux.HandleFunc("POST /api/source/delete", s.sourceDelete)
+	mux.HandleFunc("POST /api/source/models", s.sourceModels)
 	return s.guard(mux)
 }
 
@@ -81,6 +88,38 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// readPost 统一校验 POST：token、JSON 类型、请求体大小，再解码。失败时已写好响应，返回 false。
+func (s *Server) readPost(w http.ResponseWriter, r *http.Request, limit int64, v any) bool {
+	tok := r.Header.Get("X-ACSW-Token")
+	if subtle.ConstantTimeCompare([]byte(tok), []byte(s.Token)) != 1 || s.Token == "" {
+		writeJSON(w, 403, map[string]string{"error": "token 不对，请刷新页面"})
+		return false
+	}
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		writeJSON(w, 415, map[string]string{"error": "需要 JSON"})
+		return false
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit)).Decode(v); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+		return false
+	}
+	return true
+}
+
+// launchView 是某个项目目录的启动命令（只给用户复制，页面不会执行它）。
+type launchView struct {
+	Dir  string `json:"dir"`
+	Cmd  string `json:"cmd"` // cmd 形式
+	PS   string `json:"ps"`  // PowerShell 形式
+	Warn string `json:"warn,omitempty"`
+}
+
+// homeView 在 home.Status 之外附上每个项目目录的启动命令。
+type homeView struct {
+	home.Status
+	Launches []launchView `json:"launches"`
+}
+
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	st, err := s.App.Status()
 	if err != nil {
@@ -96,32 +135,28 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	for _, x := range srcs {
 		sv = append(sv, sourceView{Name: x.Name, Type: x.Meta.Type, BaseURL: x.Meta.BaseURL, Model: x.Meta.Model, HasLogin: x.HasLogin, UsedBy: x.UsedBy})
 	}
-	if st == nil {
-		st = []home.Status{}
+	hv := []homeView{}
+	for _, h := range st {
+		v := homeView{Status: h, Launches: []launchView{}}
+		for _, d := range h.Projects {
+			c, ps, warn := core.LaunchCommands(d, h.Home)
+			v.Launches = append(v.Launches, launchView{Dir: d, Cmd: c, PS: ps, Warn: warn})
+		}
+		hv = append(hv, v)
 	}
 	if sv == nil {
 		sv = []sourceView{}
 	}
-	writeJSON(w, 200, map[string]any{"homes": st, "sources": sv})
+	writeJSON(w, 200, map[string]any{"homes": hv, "sources": sv})
 }
 
 func (s *Server) use(w http.ResponseWriter, r *http.Request) {
-	tok := r.Header.Get("X-ACSW-Token")
-	if subtle.ConstantTimeCompare([]byte(tok), []byte(s.Token)) != 1 || s.Token == "" {
-		writeJSON(w, 403, map[string]string{"error": "token 不对，请刷新页面"})
-		return
-	}
-	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		writeJSON(w, 415, map[string]string{"error": "需要 JSON"})
-		return
-	}
 	var req struct {
 		Home   string `json:"home"`
 		Source string `json:"source"`
 		DryRun bool   `json:"dry_run"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
-		writeJSON(w, 400, map[string]string{"error": "请求格式不对"})
+	if !s.readPost(w, r, 4096, &req) {
 		return
 	}
 	res, err := s.App.Use(home.UseOptions{Home: req.Home, Source: req.Source, DryRun: req.DryRun})
@@ -130,4 +165,91 @@ func (s *Server) use(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "dry_run": req.DryRun, "steps": res.Steps, "warnings": res.Warnings, "backup_dir": res.BackupDir, "changed": res.Changed})
+}
+
+// sourceReq 是新增/编辑 custom source 的请求。key 只进凭据管理器，任何响应都不带它。
+type sourceReq struct {
+	Name    string `json:"name"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+	Key     string `json:"key"`
+}
+
+const sourceBodyLimit = 8192
+
+func (s *Server) sourceAdd(w http.ResponseWriter, r *http.Request) {
+	var req sourceReq
+	if !s.readPost(w, r, sourceBodyLimit, &req) {
+		return
+	}
+	if err := s.App.AddCustomSource(strings.TrimSpace(req.Name), req.BaseURL, req.Model, req.Key); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "name": strings.TrimSpace(req.Name), "notes": []string{"已建 custom source，key 已存入" + s.App.Cred.Kind()}})
+}
+
+func (s *Server) sourceEdit(w http.ResponseWriter, r *http.Request) {
+	var req sourceReq
+	if !s.readPost(w, r, sourceBodyLimit, &req) {
+		return
+	}
+	res, err := s.App.EditCustomSource(req.Name, req.BaseURL, req.Model, req.Key)
+	if err != nil {
+		code := 400
+		if errors.Is(err, core.ErrHomeBusy) {
+			code = 409
+		}
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	allOK := true
+	for _, h := range res.Homes {
+		allOK = allOK && h.OK
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "all_homes_ok": allOK, "result": res})
+}
+
+// sourceModels 代为请求 custom source 的 <base_url>/models，成功时原样返回上游响应体；key 不出 acsw。
+func (s *Server) sourceModels(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !s.readPost(w, r, 1024, &req) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), core.ModelsTimeout)
+	defer cancel()
+	body, err := s.App.SourceModels(ctx, strings.TrimSpace(req.Name))
+	if err != nil {
+		code := 400 // 本地问题：不是 custom、不存在、读不到 key
+		var ue *core.UpstreamError
+		if errors.As(err, &ue) {
+			code = 502 // 上游 /models 出错
+		}
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+	_, _ = w.Write(body)
+}
+
+func (s *Server) sourceDelete(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !s.readPost(w, r, 1024, &req) {
+		return
+	}
+	dir, err := s.App.RemoveCustomSource(req.Name)
+	if err != nil {
+		code := 400
+		if errors.Is(err, source.ErrInUse) {
+			code = 409
+		}
+		writeJSON(w, code, map[string]any{"error": err.Error(), "backup_dir": dir})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "backup_dir": dir})
 }
