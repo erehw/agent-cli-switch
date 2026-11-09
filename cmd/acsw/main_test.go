@@ -2,10 +2,13 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
 	"acsw/internal/core"
+	"acsw/internal/exitcode"
 )
 
 func TestParseArgs(t *testing.T) {
@@ -52,11 +55,27 @@ func TestParseCodexArgs(t *testing.T) {
 	}
 }
 
-func TestFailUsageExitCode(t *testing.T) {
-	if code := fail(core.Usage("当前目录没有映射，先运行 acsw map <home>")); code != 2 {
-		t.Fatal(code)
+func TestFailExitCodes(t *testing.T) {
+	cases := []struct {
+		err  error
+		want exitcode.Code
+	}{
+		{core.Usage("用法：…"), exitcode.BadArgs},
+		{errors.New("别的错"), exitcode.Other},
+		{exitcode.With(exitcode.NotMapped, core.Usage("当前目录没有映射")), exitcode.NotMapped},
+		{fmt.Errorf("包一层：%w", exitcode.With(exitcode.KeyUnreadable, errors.New("k"))), exitcode.KeyUnreadable},
 	}
-	if code := fail(errors.New("别的错")); code != 1 {
-		t.Fatal(code)
+	for _, c := range cases {
+		var buf strings.Builder
+		got := failTo(&buf, c.err)
+		if got != c.want.Exit() || !strings.HasPrefix(buf.String(), "acsw 错误：") {
+			t.Fatal(c.err, got, buf.String())
+		}
+		if runtime.GOOS == "windows" && got != int(c.want) {
+			t.Fatal("windows 上应是大码", got)
+		}
+	}
+	if _, _, _, err := parseArgs([]string{"--nope"}, nil, nil); codeOf(err) != exitcode.BadArgs {
+		t.Fatal("参数错误应是 BadArgs")
 	}
 }

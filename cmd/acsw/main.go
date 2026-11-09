@@ -3,6 +3,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +24,7 @@ import (
 
 	"acsw/internal/config"
 	"acsw/internal/core"
+	"acsw/internal/exitcode"
 	"acsw/internal/home"
 	"acsw/internal/web"
 )
@@ -32,14 +37,19 @@ const usage = `acsw %s — agent cli switch（别名 code switch）
   acsw source add <名称> --type openai [--from <现有CODEX_HOME>]
   acsw source add <名称> --type custom --base-url <URL> --model <模型> [--key-stdin]
   acsw source list
+  acsw source edit <名称> [--base-url <URL>] [--model <模型>] [--set-key|--key-stdin]   # 只改 custom
+  acsw source rm <名称> --yes                  # 只删 custom；有 home 在用就拒绝
+  acsw source models <名称>                    # 只限 custom：GET <base_url>/models，原样输出响应体
   acsw home add <名称>
   acsw home cmd <home>                         # 生成 home\<home>\acsw-codex.cmd（给别的程序调用）
+  acsw home alias <home> [官方CODEX_HOME]       # 把 home 设为官方目录的只读别名（默认 %%USERPROFILE%%\.codex）
+  acsw home alias <home> --off                 # 取消别名
   acsw map <home> [项目目录]
   acsw use <home> <source> [--dry-run] [--strict]
   acsw codex [--home <home>] [--expect-home <home>] [codex 参数...]
   acsw run [codex] [...]                       # 等同 acsw codex（兼容旧用法）
   acsw last [--home <home>] [-n 5]
-  acsw status
+  acsw status [--json]                         # --json：稳定的 JSON（见 README），不含 key
   acsw ui [--port 7799] [--open]
   acsw version
 
@@ -82,7 +92,7 @@ func realMain(args []string) int {
 			pos = append(pos, wd)
 		}
 		if err != nil || len(pos) != 2 {
-			return fail(errors.New("用法：acsw map <home> [项目目录]（不写目录就用当前目录）"))
+			return fail(core.Usage("用法：acsw map <home> [项目目录]（不写目录就用当前目录）"))
 		}
 		abs, err := app.MapProject(pos[1], pos[0])
 		if err != nil {
@@ -93,7 +103,7 @@ func realMain(args []string) int {
 	case "use":
 		f, pos, _, err := parseArgs(rest, nil, set("dry-run", "strict"))
 		if err != nil || len(pos) != 2 {
-			return fail(errors.New("用法：acsw use <home> <source> [--dry-run] [--strict]"))
+			return fail(core.Usage("用法：acsw use <home> <source> [--dry-run] [--strict]"))
 		}
 		dry := f["dry-run"] != ""
 		res, err := app.Use(home.UseOptions{Home: pos[0], Source: pos[1], DryRun: dry, StrictCodex: f["strict"] != ""})
@@ -113,7 +123,7 @@ func realMain(args []string) int {
 			rest = rest[1:]
 		} else if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") && rest[0] != "--" {
 			tool := rest[0]
-			return fail(fmt.Errorf("还不支持工具 %q（目前只有 codex；也可用 acsw codex ...）", tool))
+			return fail(core.Usage(fmt.Sprintf("还不支持工具 %q（目前只有 codex；也可用 acsw codex ...）", tool)))
 		}
 		return cmdCodex(app, rest)
 	case "last":
@@ -150,6 +160,13 @@ func realMain(args []string) int {
 		fmt.Printf("接续：acsw codex resume %s\n", r.Threads[0].ID)
 		return 0
 	case "status":
+		sf, _, _, err := parseArgs(rest, nil, set("json"))
+		if err != nil {
+			return fail(core.Usage("用法：acsw status [--json]"))
+		}
+		if sf["json"] != "" {
+			return statusJSON(app, os.Stdout)
+		}
 		st, err := app.Status()
 		if err != nil {
 			return fail(err)
@@ -164,7 +181,13 @@ func realMain(args []string) int {
 			if src == "" {
 				src = "（未设置）"
 			}
+			if s.AliasOf != "" {
+				src = "（官方别名）"
+			}
 			fmt.Printf("%-12s %-12s %-8s %-6d %s\n", s.Home, src, s.Provider, s.Running, strings.Join(s.Projects, "; "))
+			if s.AliasOf != "" {
+				fmt.Println("  别名：" + s.AliasOf + "（只读，acsw 不写入）")
+			}
 			if s.Problem != "" {
 				fmt.Println("  问题：" + s.Problem)
 			}
@@ -183,27 +206,52 @@ func realMain(args []string) int {
 		}
 		return serveUI(app, port, f["open"] != "")
 	default:
-		return fail(fmt.Errorf("不认识的命令 %q，运行 acsw help 看用法", cmd))
+		return fail(core.Usage(fmt.Sprintf("不认识的命令 %q，运行 acsw help 看用法", cmd)))
 	}
 }
 
 func cmdHome(app *core.App, rest []string) int {
 	if len(rest) == 0 {
-		return fail(errors.New("用法：acsw home add <名称>  或  acsw home cmd <home>"))
+		return fail(core.Usage("用法：acsw home add <名称> | acsw home cmd <home> | acsw home alias <home> [官方目录|--off]"))
 	}
 	switch rest[0] {
 	case "add":
 		if len(rest) != 2 {
-			return fail(errors.New("用法：acsw home add <名称>"))
+			return fail(core.Usage("用法：acsw home add <名称>"))
 		}
 		if err := app.AddHome(rest[1]); err != nil {
 			return fail(err)
 		}
 		fmt.Printf("已建 home %s：%s\n下一步：acsw use %s <source>\n", rest[1], app.Paths.HomeDir(rest[1]), rest[1])
 		return 0
+	case "alias":
+		f, pos, _, err := parseArgs(rest[1:], nil, set("off"))
+		if err != nil || len(pos) < 1 || len(pos) > 2 || (f["off"] != "" && len(pos) != 1) {
+			return fail(core.Usage("用法：acsw home alias <home> [官方CODEX_HOME，默认 %USERPROFILE%\\.codex]  或  acsw home alias <home> --off"))
+		}
+		if f["off"] != "" {
+			if err := app.ClearHomeAlias(pos[0]); err != nil {
+				return fail(err)
+			}
+			fmt.Printf("已取消 home %s 的官方别名（只改了 map.toml）\n", pos[0])
+			return 0
+		}
+		dir := ""
+		if len(pos) == 2 {
+			dir = pos[1]
+		} else if dir, err = core.DefaultOfficialCodexHome(); err != nil {
+			return fail(err)
+		}
+		abs, err := app.SetHomeAlias(pos[0], dir)
+		if err != nil {
+			return fail(err)
+		}
+		fmt.Printf("已设置：home %s = 官方 CODEX_HOME %s 的只读别名（只改了 map.toml，没有碰官方目录）\n", pos[0], abs)
+		fmt.Printf("映射到 %s 的目录里运行 acsw codex，会直接用官方目录和它自己的登录启动 codex\n", pos[0])
+		return 0
 	case "cmd":
 		if len(rest) != 2 {
-			return fail(errors.New("用法：acsw home cmd <home>"))
+			return fail(core.Usage("用法：acsw home cmd <home>"))
 		}
 		exe, err := os.Executable()
 		if err != nil {
@@ -223,7 +271,7 @@ func cmdHome(app *core.App, rest []string) int {
 		}
 		return 0
 	default:
-		return fail(fmt.Errorf("不认识的 home 子命令 %q", rest[0]))
+		return fail(core.Usage(fmt.Sprintf("不认识的 home 子命令 %q", rest[0])))
 	}
 }
 
@@ -231,7 +279,7 @@ func cmdHome(app *core.App, rest []string) int {
 func cmdCodex(app *core.App, rest []string) int {
 	homeFlag, expect, codexArgs, err := parseCodexArgs(rest)
 	if err != nil {
-		return fail(err)
+		return fail(core.Usage(err.Error()))
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -246,7 +294,7 @@ func cmdCodex(app *core.App, rest []string) int {
 
 func cmdSource(app *core.App, rest []string) int {
 	if len(rest) == 0 {
-		return fail(errors.New("用法：acsw source add|list ..."))
+		return fail(core.Usage("用法：acsw source add|list|edit|rm ..."))
 	}
 	switch rest[0] {
 	case "list":
@@ -280,7 +328,7 @@ func cmdSource(app *core.App, rest []string) int {
 	case "add":
 		f, pos, _, err := parseArgs(rest[1:], set("type", "from", "base-url", "model"), set("key-stdin"))
 		if err != nil || len(pos) != 1 {
-			return fail(errors.New("用法：acsw source add <名称> --type openai|custom ..."))
+			return fail(core.Usage("用法：acsw source add <名称> --type openai|custom ..."))
 		}
 		name := pos[0]
 		switch f["type"] {
@@ -306,11 +354,97 @@ func cmdSource(app *core.App, rest []string) int {
 		default:
 			return fail(errors.New("--type 只能是 openai 或 custom"))
 		}
+	case "edit":
+		f, pos, _, err := parseArgs(rest[1:], set("base-url", "model"), set("key-stdin", "set-key"))
+		if err != nil || len(pos) != 1 {
+			return fail(core.Usage("用法：acsw source edit <名称> [--base-url <URL>] [--model <模型>] [--set-key|--key-stdin]（只支持 custom；不写的项不改）"))
+		}
+		key := ""
+		if f["set-key"] != "" || f["key-stdin"] != "" {
+			if key, err = readKey(f["key-stdin"] != ""); err != nil {
+				return fail(err)
+			}
+			if key == "" {
+				return fail(errors.New("key 是空的，什么都没改"))
+			}
+		}
+		res, err := app.EditCustomSource(pos[0], f["base-url"], f["model"], key)
+		if err != nil {
+			return fail(err)
+		}
+		for _, n := range res.Notes {
+			fmt.Println(n)
+		}
+		var bad []string
+		for _, h := range res.Homes {
+			if h.OK {
+				fmt.Printf("home %s：已重新应用\n", h.Home)
+			} else {
+				bad = append(bad, h.Home)
+				fmt.Fprintf(os.Stderr, "home %s：未应用：%s\n", h.Home, h.Error)
+			}
+			for _, w := range h.Warnings {
+				fmt.Println("  注意：" + w)
+			}
+		}
+		if len(bad) > 0 {
+			return fail(exitcode.WithF(exitcode.Other, fmt.Errorf("source %s 已保存，但 home %s 没有重新应用（原因见上）", pos[0], strings.Join(bad, ", ")), exitcode.F{"source": pos[0], "homes": bad}))
+		}
+		return 0
+	case "models":
+		_, pos, _, err := parseArgs(rest[1:], nil, nil)
+		if err != nil || len(pos) != 1 {
+			return fail(core.Usage("用法：acsw source models <名称>（只支持 custom）"))
+		}
+		return sourceModels(app, pos[0], os.Stdout, os.Stderr)
+	case "rm":
+		f, pos, _, err := parseArgs(rest[1:], nil, set("yes"))
+		if err != nil || len(pos) != 1 {
+			return fail(core.Usage("用法：acsw source rm <名称> --yes（只支持 custom）"))
+		}
+		if f["yes"] == "" {
+			return fail(core.Usage("删除前请确认：加 --yes。会删掉凭据管理器里的 key，目录移到 " + app.Paths.BackupDir()))
+		}
+		dir, err := app.RemoveCustomSource(pos[0])
+		if err != nil {
+			return fail(err)
+		}
+		fmt.Printf("已删除 source %s：key 已从%s删除，目录移到 %s\n", pos[0], app.Cred.Kind(), dir)
+		return 0
 	}
-	return fail(fmt.Errorf("不认识的 source 子命令 %q", rest[0]))
+	return fail(core.Usage(fmt.Sprintf("不认识的 source 子命令 %q", rest[0])))
 }
 
 // readKey 读 API key：终端上不回显；否则从标准输入读一行。
+// sourceModels 请求 custom source 的 <base_url>/models：成功时 stdout 只有原样的响应体，其余信息都走 stderr。
+func sourceModels(app *core.App, name string, stdout, stderr io.Writer) int {
+	ctx, cancel := context.WithTimeout(context.Background(), core.ModelsTimeout)
+	defer cancel()
+	body, err := app.SourceModels(ctx, name)
+	if err != nil {
+		return failTo(stderr, err)
+	}
+	if _, err := stdout.Write(body); err != nil {
+		return failTo(stderr, fmt.Errorf("写出响应失败：%w", err))
+	}
+	return 0
+}
+
+// statusJSON 把 StatusReport 以 JSON 写到 stdout；stdout 不输出别的东西。
+func statusJSON(app *core.App, w io.Writer) int {
+	rep, err := app.StatusReport()
+	if err != nil {
+		return fail(err)
+	}
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(rep); err != nil {
+		return fail(err)
+	}
+	return 0
+}
+
 func readKey(fromStdin bool) (string, error) {
 	fd := int(os.Stdin.Fd())
 	if !fromStdin && term.IsTerminal(fd) {
@@ -438,7 +572,7 @@ func parseArgs(args []string, valueFlags, boolFlags map[string]bool) (map[string
 		case valueFlags[k]:
 			if !hasV {
 				if i+1 >= len(args) {
-					return nil, nil, nil, fmt.Errorf("--%s 后面缺值", k)
+					return nil, nil, nil, core.Usage(fmt.Sprintf("--%s 后面缺值", k))
 				}
 				i++
 				v = args[i]
@@ -447,16 +581,72 @@ func parseArgs(args []string, valueFlags, boolFlags map[string]bool) (map[string
 		case boolFlags[k]:
 			f[k] = "1"
 		default:
-			return nil, nil, nil, fmt.Errorf("不认识的参数 %s", a)
+			return nil, nil, nil, core.Usage(fmt.Sprintf("不认识的参数 %s", a))
 		}
 	}
 	return f, pos, nil, nil
 }
 
-func fail(err error) int {
-	fmt.Fprintln(os.Stderr, "acsw 错误："+err.Error())
-	if core.IsUsage(err) {
-		return 2
+// codeOf 决定 acsw 自己出错时的退出码（见 internal/exitcode）：附了码的用该码，其余用法错误为 BadArgs，别的为 Other。
+func codeOf(err error) exitcode.Code {
+	if c, ok := exitcode.Of(err); ok {
+		return c
 	}
-	return 1
+	if core.IsUsage(err) {
+		return exitcode.BadArgs
+	}
+	return exitcode.Other
+}
+
+// fail 在 stderr 打印 "acsw 错误：…"，返回本平台的退出码。
+func fail(err error) int { return failTo(os.Stderr, err) }
+
+// failTo 先写给人看的一行 "acsw 错误：…"，再把一行紧凑 JSON 作为 stderr 的最后一行（给程序解析），返回退出码。
+// JSON 固定字段：acsw_error（实际退出码）、kind（稳定字符串）、msg（与人读行相同）；其余为可选上下文字段。
+// 只在 acsw 自己出错时调用；codex 跑起来后的退出码直接透传，不经过这里。
+func failTo(w io.Writer, err error) int {
+	c := codeOf(err)
+	code := c.Exit()
+	msg := err.Error()
+	fmt.Fprintln(w, "acsw 错误："+msg)
+	_, _ = w.Write(errorJSON(code, c.Kind(), msg, exitcode.Fields(err)))
+	return code
+}
+
+// errorJSON 生成单行 JSON（以 \n 结尾）：先 acsw_error、kind、msg，再按字母序放上下文字段。
+func errorJSON(code int, kind, msg string, f exitcode.F) []byte {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(struct {
+		AcswError int    `json:"acsw_error"`
+		Kind      string `json:"kind"`
+		Msg       string `json:"msg"`
+	}{code, kind, msg})
+	out := bytes.TrimRight(b.Bytes(), "\n")
+	keys := make([]string, 0, len(f))
+	for k := range f {
+		if k != "acsw_error" && k != "kind" && k != "msg" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	if len(keys) > 0 {
+		out = out[:len(out)-1] // 去掉 }
+		for _, k := range keys {
+			var kb, vb bytes.Buffer
+			ke, ve := json.NewEncoder(&kb), json.NewEncoder(&vb)
+			ke.SetEscapeHTML(false)
+			ve.SetEscapeHTML(false)
+			if ke.Encode(k) != nil || ve.Encode(f[k]) != nil {
+				continue
+			}
+			out = append(out, ',')
+			out = append(out, bytes.TrimRight(kb.Bytes(), "\n")...)
+			out = append(out, ':')
+			out = append(out, bytes.TrimRight(vb.Bytes(), "\n")...)
+		}
+		out = append(out, '}')
+	}
+	return append(out, '\n')
 }

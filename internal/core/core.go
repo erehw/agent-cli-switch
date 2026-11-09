@@ -14,6 +14,7 @@ import (
 	"acsw/internal/codexdb"
 	"acsw/internal/config"
 	"acsw/internal/cred"
+	"acsw/internal/exitcode"
 	"acsw/internal/home"
 	"acsw/internal/proc"
 	"acsw/internal/source"
@@ -64,9 +65,16 @@ func New() (*App, error) {
 	}, nil
 }
 
-const lockWait = 10 * time.Second
+// lockWait 是等全局锁的时间（测试里可改短）。
+var lockWait = 10 * time.Second
 
-func (a *App) lock() (func(), error) { return config.Lock(a.Paths, lockWait) }
+func (a *App) lock() (func(), error) {
+	u, err := config.Lock(a.Paths, lockWait)
+	if errors.Is(err, config.ErrLockBusy) {
+		return nil, exitcode.With(exitcode.LockBusy, err)
+	}
+	return u, err
+}
 
 func (a *App) environ() []string {
 	if a.Environ != nil {
@@ -85,7 +93,7 @@ func (a *App) Codex() (string, error) {
 	}
 	p, err := exec.LookPath("codex")
 	if err != nil {
-		return "", errors.New("找不到 codex 命令：请确认它在 PATH 里，或用环境变量 ACSW_CODEX 指定完整路径")
+		return "", exitcode.With(exitcode.CodexNotFound, errors.New("找不到 codex 命令：请确认它在 PATH 里，或用环境变量 ACSW_CODEX 指定完整路径"))
 	}
 	return p, nil
 }
@@ -185,10 +193,10 @@ func (a *App) Status() ([]home.Status, error) { return home.StatusAll(a.Paths, a
 func (a *App) ResolveHome(dir, explicit string) (string, error) {
 	if explicit != "" {
 		if err := config.ValidName("home", explicit); err != nil {
-			return "", err
+			return "", exitcode.WithF(exitcode.HomeNotFound, err, exitcode.F{"home": explicit})
 		}
 		if !config.Exists(a.Paths.HomeDir(explicit)) {
-			return "", fmt.Errorf("home %q 不存在", explicit)
+			return "", exitcode.WithF(exitcode.HomeNotFound, fmt.Errorf("home %q 不存在", explicit), exitcode.F{"home": explicit})
 		}
 		return explicit, nil
 	}
@@ -198,7 +206,7 @@ func (a *App) ResolveHome(dir, explicit string) (string, error) {
 	}
 	pr, ok := m.MatchHome(dir, a.CI)
 	if !ok {
-		return "", Usage("当前目录没有映射，先运行 acsw map <home>")
+		return "", exitcode.WithF(exitcode.NotMapped, Usage("当前目录没有映射，先运行 acsw map <home>"), exitcode.F{"dir": dir})
 	}
 	return pr.Home, nil
 }
@@ -211,7 +219,7 @@ func (a *App) mappedHome(dir string) (string, error) {
 	}
 	pr, ok := m.MatchHome(dir, a.CI)
 	if !ok {
-		return "", Usage("当前目录没有映射，先运行 acsw map <home>")
+		return "", exitcode.WithF(exitcode.NotMapped, Usage("当前目录没有映射，先运行 acsw map <home>"), exitcode.F{"dir": dir})
 	}
 	return pr.Home, nil
 }
@@ -243,20 +251,20 @@ func (a *App) Run(opt RunOptions) (int, error) {
 			return 1, Usage(err.Error())
 		}
 		if opt.Home != "" && opt.Home != opt.ExpectHome {
-			return 1, Usage(fmt.Sprintf("--home %s 与 --expect-home %s 冲突；--expect-home 不能用 --home 绕过", opt.Home, opt.ExpectHome))
+			return 1, exitcode.WithF(exitcode.HomeConflict, Usage(fmt.Sprintf("--home %s 与 --expect-home %s 冲突；--expect-home 不能用 --home 绕过", opt.Home, opt.ExpectHome)), exitcode.F{"home": opt.Home, "expect_home": opt.ExpectHome, "dir": opt.Dir})
 		}
 		mapped, err := a.mappedHome(opt.Dir)
 		if err != nil {
 			if IsUsage(err) {
-				return 1, Usage(fmt.Sprintf("当前目录没有映射，期望 home %s。先运行：acsw map %s", opt.ExpectHome, opt.ExpectHome))
+				return 1, exitcode.WithF(exitcode.NotMapped, Usage(fmt.Sprintf("当前目录没有映射，期望 home %s。先运行：acsw map %s", opt.ExpectHome, opt.ExpectHome)), exitcode.F{"expect_home": opt.ExpectHome, "dir": opt.Dir})
 			}
 			return 1, err
 		}
 		if mapped != opt.ExpectHome {
-			return 1, Usage(fmt.Sprintf("当前目录属于 %s，不是 %s", mapped, opt.ExpectHome))
+			return 1, exitcode.WithF(exitcode.ExpectMismatch, Usage(fmt.Sprintf("当前目录属于 %s，不是 %s", mapped, opt.ExpectHome)), exitcode.F{"home": mapped, "expect_home": opt.ExpectHome, "dir": opt.Dir})
 		}
 		if !config.Exists(a.Paths.HomeDir(opt.ExpectHome)) {
-			return 1, Usage(fmt.Sprintf("home %q 不存在", opt.ExpectHome))
+			return 1, exitcode.WithF(exitcode.HomeNotFound, Usage(fmt.Sprintf("home %q 不存在", opt.ExpectHome)), exitcode.F{"home": opt.ExpectHome, "dir": opt.Dir})
 		}
 		h = opt.ExpectHome
 	} else {
@@ -271,32 +279,45 @@ func (a *App) Run(opt RunOptions) (int, error) {
 		return 1, err
 	}
 	srcName := m.Homes[h].Source
-	if srcName == "" {
-		return 1, Usage(fmt.Sprintf("home %s 还没指定 source，先运行：acsw use %s <source>", h, h))
-	}
-	meta, err := config.LoadSource(a.Paths, srcName)
-	if err != nil {
-		return 1, err
-	}
-	hdir := a.Paths.HomeDir(h)
-	set := map[string]string{"CODEX_HOME": hdir}
-	if meta.Type == config.ProviderCustom {
-		key, err := a.Cred.Get(cred.Target(srcName))
-		if err != nil {
-			return 1, fmt.Errorf("从%s读不到 source %s 的 key（%v）。请重新运行 acsw source add %s --type custom ...", a.Cred.Kind(), srcName, err, srcName)
+	ctrl := a.Paths.HomeDir(h) // acsw 自己的 home 目录：运行登记总放这里（别名 home 也一样，不写进官方目录）
+	codexHome := a.Paths.CodexHome(h, m.Homes[h])
+	set := map[string]string{}
+	var banner string
+	if alias := m.Homes[h].AliasOf; alias != "" {
+		// 官方 CODEX_HOME 别名：codex 用官方目录里自己的登录，acsw 不注入 source/key，也不往官方目录写任何东西。
+		if st, err := os.Stat(alias); err != nil || !st.IsDir() {
+			return 1, exitcode.WithF(exitcode.HomeNotFound, fmt.Errorf("home %s 是官方目录 %s 的别名，但这个目录不存在", h, alias), exitcode.F{"home": h, "alias_of": alias, "dir": opt.Dir})
 		}
-		set[config.KeyEnv] = key
-	} else if !config.Exists(filepath.Join(hdir, "auth.json")) {
-		fmt.Fprintf(a.Stderr, "acsw 注意：home %s 里没有 auth.json，codex 可能会要求登录\n", h)
+		srcName = ""
+		banner = fmt.Sprintf("acsw：home=%s  官方 CODEX_HOME 别名（不注入 source/key）  CODEX_HOME=%s\n", h, alias)
+	} else {
+		if srcName == "" {
+			return 1, exitcode.WithF(exitcode.NoSource, Usage(fmt.Sprintf("home %s 还没指定 source，先运行：acsw use %s <source>", h, h)), exitcode.F{"home": h, "dir": opt.Dir})
+		}
+		meta, err := config.LoadSource(a.Paths, srcName)
+		if err != nil {
+			return 1, exitcode.WithF(exitcode.SourceInvalid, err, exitcode.F{"home": h, "source": srcName})
+		}
+		if meta.Type == config.ProviderCustom {
+			key, err := a.Cred.Get(cred.Target(srcName))
+			if err != nil {
+				return 1, exitcode.WithF(exitcode.KeyUnreadable, fmt.Errorf("从%s读不到 source %s 的 key（%v）。请重新运行 acsw source add %s --type custom ...", a.Cred.Kind(), srcName, err, srcName), exitcode.F{"home": h, "source": srcName})
+			}
+			set[config.KeyEnv] = key
+		} else if !config.Exists(filepath.Join(codexHome, "auth.json")) {
+			fmt.Fprintf(a.Stderr, "acsw 注意：home %s 里没有 auth.json，codex 可能会要求登录\n", h)
+		}
+		banner = fmt.Sprintf("acsw：home=%s  source=%s (%s)  CODEX_HOME=%s\n", h, srcName, meta.Provider(), codexHome)
 	}
+	set["CODEX_HOME"] = codexHome
 	codex, err := a.Codex()
 	if err != nil {
 		return 1, err
 	}
-	fmt.Fprintf(a.Stderr, "acsw：home=%s  source=%s (%s)  CODEX_HOME=%s\n", h, srcName, meta.Provider(), hdir)
+	fmt.Fprint(a.Stderr, banner)
 
 	ent := proc.Entry{PID: os.Getpid(), Source: srcName, Cwd: opt.Dir, Started: time.Now()}
-	cleanup, err := proc.Register(hdir, ent)
+	cleanup, err := proc.Register(ctrl, ent)
 	if err != nil {
 		return 1, err
 	}
@@ -319,10 +340,10 @@ func (a *App) Run(opt RunOptions) (int, error) {
 	}()
 
 	if err := cmd.Start(); err != nil {
-		return 1, fmt.Errorf("启动 codex 失败：%w", err)
+		return 1, exitcode.WithF(exitcode.CodexStart, fmt.Errorf("启动 codex 失败：%w", err), exitcode.F{"home": h, "dir": opt.Dir})
 	}
 	ent.ChildPID = cmd.Process.Pid
-	_ = proc.Update(hdir, ent)
+	_ = proc.Update(ctrl, ent)
 	err = cmd.Wait()
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -377,6 +398,15 @@ func (a *App) Last(dir, explicitHome string, limit int) (LastResult, error) {
 		return LastResult{}, err
 	}
 	same := func(threadCwd, cur string) bool { return threadCwd != "" && config.UnderDir(threadCwd, cur, a.CI) }
-	ts, note, err := codexdb.Recent(a.Paths.HomeDir(h), dir, limit, same)
+	m, err := config.LoadMap(a.Paths)
+	if err != nil {
+		return LastResult{}, err
+	}
+	if alias := m.Homes[h].AliasOf; alias != "" {
+		// 官方目录只读：状态库复制到临时目录再读，不在官方目录里打开/改动任何文件。
+		ts, note, err := codexdb.RecentReadOnly(a.Paths.CodexHome(h, m.Homes[h]), dir, limit, same)
+		return LastResult{Home: h, Threads: ts, Note: note}, err
+	}
+	ts, note, err := codexdb.Recent(a.Paths.CodexHome(h, m.Homes[h]), dir, limit, same)
 	return LastResult{Home: h, Threads: ts, Note: note}, err
 }

@@ -14,6 +14,7 @@ import (
 
 	"acsw/internal/codexdb"
 	"acsw/internal/config"
+	"acsw/internal/exitcode"
 	"acsw/internal/proc"
 	"acsw/internal/source"
 )
@@ -169,6 +170,16 @@ func CheckIdle(p config.Paths, c proc.Checker, homeName string, strict bool) ([]
 	return warns, nil
 }
 
+// ProviderOfficial 是官方 CODEX_HOME 别名 home 在状态里显示的 provider。
+const ProviderOfficial = "official"
+
+// ReadonlyAliasError 是对官方别名 home 做写操作时的统一错误（退出码 99994008）。
+func ReadonlyAliasError(homeName, alias string) error {
+	return exitcode.WithF(exitcode.ReadonlyAlias,
+		fmt.Errorf("home %s 是官方目录 %s 的只读别名，acsw 不会改它的登录、配置或 source。要切 source 请用别的 home；确实要取消别名：acsw home alias %s --off", homeName, alias, homeName),
+		exitcode.F{"home": homeName, "alias_of": alias})
+}
+
 // Use 把 home 切到 source。调用方负责持有全局锁。
 func Use(env Env, opt UseOptions) (res UseResult, err error) {
 	p := env.Paths
@@ -196,6 +207,9 @@ func Use(env Env, opt UseOptions) (res UseResult, err error) {
 	m, err := config.LoadMap(p)
 	if err != nil {
 		return res, err
+	}
+	if alias := m.Homes[opt.Home].AliasOf; alias != "" {
+		return res, ReadonlyAliasError(opt.Home, alias)
 	}
 	oldName := m.Homes[opt.Home].Source
 	var oldMeta *config.SourceMeta
@@ -379,6 +393,8 @@ type Status struct {
 	Running  int      `json:"running"`
 	Projects []string `json:"projects"`
 	Problem  string   `json:"problem,omitempty"`
+	AliasOf  string   `json:"alias_of"` // 官方 CODEX_HOME 别名时为该目录（此时 Provider 为 "official"）；普通 home 为 ""
+	Dir      string   `json:"dir"`      // codex 实际用的 CODEX_HOME（config.Paths.CodexHome）；会话在 <dir>\sessions
 }
 
 // StatusAll 汇总所有 home。
@@ -397,11 +413,16 @@ func StatusAll(p config.Paths, c proc.Checker) ([]Status, error) {
 	}
 	var out []Status
 	for h := range names {
-		st := Status{Home: h, Source: m.Homes[h].Source}
+		st := Status{Home: h, Source: m.Homes[h].Source, AliasOf: m.Homes[h].AliasOf, Dir: p.CodexHome(h, m.Homes[h])}
 		if !config.Exists(p.HomeDir(h)) {
 			st.Problem = "home 目录不存在"
 		}
-		if st.Source != "" {
+		if st.AliasOf != "" {
+			st.Provider = ProviderOfficial
+			if fi, err := os.Stat(st.AliasOf); err != nil || !fi.IsDir() {
+				st.Problem = "官方目录不存在：" + st.AliasOf
+			}
+		} else if st.Source != "" {
 			if meta, err := config.LoadSource(p, st.Source); err == nil {
 				st.Provider = meta.Provider()
 			} else {
