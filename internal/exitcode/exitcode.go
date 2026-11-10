@@ -28,6 +28,7 @@ const (
 	HomeInUse      Code = 99994009 // home 还有项目映射或在跑的 codex，拒绝删除
 	ToolMismatch   Code = 99994010 // source 属于另一个工具（如把 claude source 用到 codex home，或反过来）
 	SettingsClash  Code = 99994011 // --strict 时发现用户级/项目级 Claude settings 里有会漏进来的登录设置
+	NeedConfirm    Code = 99994012 // 操作会覆盖现有状态（如改掉已有别名），需要确认（--yes / 网页 confirm:true）
 
 	KeyUnreadable Code = 99995001 // 凭据管理器里读不到 key
 	CodexNotFound Code = 99995002 // 找不到 codex 可执行文件
@@ -98,6 +99,7 @@ var kinds = map[Code]string{
 	HomeInUse:      "home_in_use",
 	ToolMismatch:   "source_tool_mismatch",
 	SettingsClash:  "settings_conflict",
+	NeedConfirm:    "confirm_required",
 	ClaudeMissing:  "claude_not_found",
 	ClaudeStart:    "claude_start_failed",
 	KeyUnreadable:  "key_unreadable",

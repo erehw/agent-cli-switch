@@ -77,7 +77,26 @@ func TestHomeEndpoints(t *testing.T) {
 	if err := os.MkdirAll(official, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if c, d := post("/api/home/alias", map[string]any{"home": "home7", "dir": official}); c != 200 || d["alias_of"] == "" {
+	// home7 目录里已有 acsw-codex.cmd：要先确认
+	if c, d := post("/api/home/alias", map[string]any{"home": "home7", "dir": official}); c != 409 || d["kind"] != "confirm_required" || d["dir_has_files"] != true || d["prev_state"] == "" {
+		t.Fatal(c, d)
+	}
+	if c, d := post("/api/home/alias", map[string]any{"home": "home7", "dir": official, "confirm": true}); c != 200 || d["alias_of"] == "" {
+		t.Fatal(c, d)
+	}
+	// 同一个目录：不改，unchanged
+	if c, d := post("/api/home/alias", map[string]any{"home": "home7", "dir": official}); c != 200 || d["unchanged"] != true {
+		t.Fatal(c, d)
+	}
+	// 改成另一个目录：要确认，带上原别名
+	official2 := filepath.Join(t.TempDir(), "official2")
+	if err := os.MkdirAll(official2, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if c, d := post("/api/home/alias", map[string]any{"home": "home7", "dir": official2}); c != 409 || d["kind"] != "confirm_required" || d["prev_alias_of"] == "" || d["alias_of"] == "" {
+		t.Fatal(c, d)
+	}
+	if c, d := post("/api/home/alias", map[string]any{"home": "home7", "dir": official2, "confirm": true}); c != 200 || d["prev_alias_of"] == "" {
 		t.Fatal(c, d)
 	}
 	if c, d := post("/api/use", map[string]any{"home": "home7", "source": "api1"}); c != 409 || !strings.Contains(j(d), "--off") {

@@ -64,7 +64,7 @@ acsw source models api1                   # GET <base_url>/models，原样输出
 acsw home add home1
 acsw home rm home3 [--purge] --yes        # 见下文 / see below
 acsw home cmd home2                       # 生成 home\home2\acsw-codex.cmd / generate a launcher script
-acsw home alias home1 [dir] | --off       # 官方 .codex 只读别名 / read-only alias of the official .codex
+acsw home alias home1 [dir] [--yes] | --off # 官方 .codex 只读别名，覆盖要确认 / read-only alias of the official .codex; overwriting asks first
 acsw home import-base home2 [--dry-run]   # 导入官方 config.toml 里和 provider 无关的设置 / import provider-independent settings from the official config.toml
 acsw map home1 [项目目录 project-dir]      # 默认当前目录；最长前缀优先 / default: cwd; longest prefix wins
 acsw unmap [项目目录 project-dir]          # 取消一条映射 / remove one mapping
@@ -121,6 +121,7 @@ Once codex starts, acsw returns codex's own exit code and prints nothing extra. 
 | 99994009 | `home_in_use` | 删除 home 时还有项目映射或在跑的 codex | `home rm` refused: projects mapped or codex running |
 | 99994010 | `source_tool_mismatch` | source 属于另一个工具（claude source 用到 codex home，或反过来） | Source belongs to the other tool (claude vs codex) |
 | 99994011 | `settings_conflict` | `acsw claude --strict` 发现用户级或项目级 settings 里有盖不住的登录设置 | `acsw claude --strict` found uncovered login settings in user/project settings |
+| 99994012 | `confirm_required` | 操作会覆盖已有状态（如 `home alias` 改掉已有别名），非交互时需要 `--yes`（网页 `confirm:true`） | The operation would overwrite existing state (e.g. `home alias` over an existing alias); non-interactive runs need `--yes` (web: `confirm:true`) |
 | 99995001 | `key_unreadable` | 凭据管理器里读不到 key | Key not readable from Credential Manager |
 | 99995002 | `codex_not_found` | 找不到 codex | codex not found |
 | 99995003 | `lock_busy` | 等全局锁超时（10 秒） | Global lock timeout (10 s) |
@@ -222,16 +223,21 @@ English:
 acsw home alias home1                      # 默认 / default %USERPROFILE%\.codex
 acsw home alias home1 D:\other\.codex      # 指定目录 / explicit directory
 acsw home alias home1 --off                # 取消 / remove
+acsw home alias home1 D:\x\.codex --yes    # 覆盖已有状态不再询问 / overwrite without asking
 ```
 
-- 只改 `map.toml`（`[home.home1]` 下的 `alias_of`），不建 junction，不碰官方目录。home 已在用 source、目录不存在、目录和 acsw 根目录互相包含、同一个官方目录已有别名、home 里有 codex 在跑时，拒绝设置。
+- 只改 `map.toml`（`[home.home1]` 下的 `alias_of`），不建 junction，不碰官方目录。目录不存在、目录和 acsw 根目录互相包含、同一个官方目录已有别名、home 里有 codex 在跑（99994009）时，拒绝设置。
+- 已经是同一个目录的别名：提示“已经是……的别名，没有改动”，不写 `map.toml`，退出码 0。
+- 会覆盖已有状态时要确认：已经是另一个目录的别名、home 在用 source（确认后 source 从 `map.toml` 去掉，home 目录不删，`--off` 后可以再 `acsw use` 回来）、或 home 目录里已有文件（`.acsw-run` 不算）。终端里先显示“现在 / 改后”，问 `[y/N]`（默认 N，回车即取消、退出码 0）；不是终端时不改，报 `confirm_required`（99994012），加 `--yes` 才改。网页同样：接口返回 409 `confirm_required`（带 `prev_state`、`prev_alias_of`、`prev_source`），页面弹确认框，确认后带 `confirm:true` 再调。
 - `acsw codex`：`CODEX_HOME` 设为官方目录，不注入 source 和 key，codex 用官方目录里自己的登录；照样清掉 `OPENAI_API_KEY`、`ACSW_API_KEY` 等变量。
 - `acsw last` 和网页的“最近会话”：把状态库连同 `-wal` 复制到临时目录再查，失败时扫描 `sessions`；官方目录里不会产生任何文件。
 - acsw 从不写官方目录：`use`（命令行和网页）都会被拒绝（99994008）。运行登记放在 acsw 自己的 `home\<home>\.acsw-run`。
 
 English:
 
-- Only `map.toml` changes (`alias_of` under `[home.home1]`); no junction, the official directory is not touched. Refused when the home already uses a source, the directory is missing, it overlaps the acsw root, another home already aliases it, or codex is running in the home.
+- Only `map.toml` changes (`alias_of` under `[home.home1]`); no junction, the official directory is not touched. Refused when the directory is missing, it overlaps the acsw root, another home already aliases it, or codex is running in the home (99994009).
+- Already an alias of the same directory: prints "already an alias of ..., nothing changed", does not write `map.toml`, exit code 0.
+- Overwriting existing state needs confirmation: the home is an alias of a different directory, uses a source (after confirming the source is dropped from `map.toml`; the home directory is kept, and after `--off` you can `acsw use` it again), or its directory already has files (`.acsw-run` does not count). On a terminal acsw shows "current / new" and asks `[y/N]` (default N; Enter cancels with exit code 0); when not on a terminal nothing changes and it fails with `confirm_required` (99994012) unless `--yes` is given. The web UI works the same way: the API returns 409 `confirm_required` (with `prev_state`, `prev_alias_of`, `prev_source`), the page shows a confirm dialog and retries with `confirm:true`.
 - `acsw codex` sets `CODEX_HOME` to the official directory, injects no source or key, and codex uses its own login there; `OPENAI_API_KEY`, `ACSW_API_KEY` etc. are still removed from the environment.
 - `acsw last` and the web "recent sessions" copy the state database (with `-wal`) to a temp directory and query the copy, falling back to scanning `sessions`; nothing is created in the official directory.
 - acsw never writes the official directory: `use` (CLI and web) is refused (99994008). Run records live in acsw's own `home\<home>\.acsw-run`.

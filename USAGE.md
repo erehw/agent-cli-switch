@@ -77,6 +77,10 @@ acsw home alias home1          # 只改 map.toml / only edits map.toml
 acsw home alias home1 --off    # 取消 / remove
 ```
 
+如果 home1 已经是同一个目录的别名，只提示“没有改动”。如果它已经是别的目录的别名、在用 source 或目录里有文件，会先显示现在和改后的状态再问 `[y/N]`（默认 N）；在脚本里（不是终端）会报 `confirm_required`（99994012）而不改，确认无误时加 `--yes`。
+
+If home1 is already an alias of the same directory, acsw just says nothing changed. If it is an alias of another directory, uses a source, or its directory has files, acsw shows the current and new state and asks `[y/N]` (default N); in scripts (no terminal) it fails with `confirm_required` (99994012) and changes nothing; add `--yes` when you are sure.
+
 之后在映射到 home1 的目录里运行 `acsw codex`，直接用官方 `.codex` 和它自己的登录，不注入 source 和 key；`acsw last` 只读查会话；对 home1 执行 `acsw use` 会被拒绝（99994008）；acsw 不会往官方 `.codex` 写任何东西。
 
 Afterwards `acsw codex` in directories mapped to home1 uses the official `.codex` and its own login without injecting a source or key; `acsw last` reads sessions read-only; `acsw use` on home1 is refused (99994008); acsw never writes into the official `.codex`.
@@ -149,6 +153,7 @@ Once codex or claude starts, acsw returns its exit code. On its own errors acsw 
 | 99994009 | `home_in_use` | 删 home 时还有映射或在跑的 codex | `home rm` while mapped or running |
 | 99994010 | `source_tool_mismatch` | source 属于另一个工具（claude / codex） | Source belongs to the other tool |
 | 99994011 | `settings_conflict` | `acsw claude --strict` 发现会漏进来的登录设置 | `acsw claude --strict` found leaking login settings |
+| 99994012 | `confirm_required` | 会覆盖已有状态，需要确认（`--yes`） | Would overwrite existing state; needs confirmation (`--yes`) |
 | 99995001 | `key_unreadable` | 读不到 key | Key unreadable |
 | 99995002 | `codex_not_found` | 找不到 codex | codex not found |
 | 99995003 | `lock_busy` | 等锁超时 | Lock timeout |

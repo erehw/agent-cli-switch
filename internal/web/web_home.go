@@ -18,7 +18,7 @@ func errJSON(w http.ResponseWriter, err error) {
 	switch c {
 	case exitcode.HomeNotFound, exitcode.NotMapped:
 		code = 404
-	case exitcode.HomeInUse, exitcode.ReadonlyAlias, exitcode.LockBusy:
+	case exitcode.HomeInUse, exitcode.ReadonlyAlias, exitcode.LockBusy, exitcode.NeedConfirm:
 		code = 409
 	}
 	kind := "other"
@@ -34,6 +34,8 @@ type homeReq struct {
 	Home string `json:"home"`
 	Dir  string `json:"dir"`
 	Off  bool   `json:"off"`
+	// Confirm 为真才允许覆盖已有状态（另一个别名、在用的 source、目录里已有文件）。
+	Confirm bool `json:"confirm"`
 }
 
 func (s *Server) homeAdd(w http.ResponseWriter, r *http.Request) {
@@ -72,12 +74,19 @@ func (s *Server) homeAlias(w http.ResponseWriter, r *http.Request) {
 		}
 		dir = d
 	}
-	abs, err := s.App.SetHomeAlias(req.Home, dir)
+	res, err := s.App.AliasHome(req.Home, dir, req.Confirm)
+	if c, _ := exitcode.Of(err); c == exitcode.NeedConfirm {
+		// 需要确认：409，带上现在和改后的状态，页面弹确认框后带 confirm:true 再调一次
+		writeJSON(w, 409, map[string]any{"error": err.Error(), "kind": c.Kind(), "home": req.Home, "alias_of": res.AliasOf,
+			"prev_alias_of": res.PrevAliasOf, "prev_source": res.PrevSource, "dir_has_files": res.DirHasFiles, "prev_state": res.PrevState()})
+		return
+	}
 	if err != nil {
 		errJSON(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "home": req.Home, "alias_of": abs})
+	writeJSON(w, 200, map[string]any{"ok": true, "home": req.Home, "alias_of": res.AliasOf, "unchanged": res.Unchanged,
+		"prev_alias_of": res.PrevAliasOf, "prev_source": res.PrevSource})
 }
 
 func (s *Server) homeCmd(w http.ResponseWriter, r *http.Request) {

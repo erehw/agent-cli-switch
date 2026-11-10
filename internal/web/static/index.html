@@ -416,8 +416,15 @@ async function homeCmd(home){
 async function aliasSet(home){
   const dir = prompt(`把 ${home} 设为官方 CODEX_HOME 的只读别名。\n官方目录（留空 = %USERPROFILE%\\.codex）：`, "");
   if(dir===null) return;
-  const [r,d] = await post("/api/home/alias",{home,dir:dir.trim()});
+  let [r,d] = await post("/api/home/alias",{home,dir:dir.trim()});
+  if(!r.ok && d.kind==="confirm_required"){
+    let msg = `home ${home}\n现在：${d.prev_state}\n改后：官方目录 ${d.alias_of} 的只读别名（只改 map.toml）`;
+    if(d.prev_source) msg += `\n\nsource ${d.prev_source} 会从 map.toml 里去掉；home 目录不删，取消别名后可以再切回这个 source。`;
+    if(!confirm(msg+"\n\n确认修改？")){ show("已取消，什么都没改", true); return; }
+    [r,d] = await post("/api/home/alias",{home,dir:dir.trim(),confirm:true});
+  }
   if(!r.ok){ show(errText(d),false); return; }
+  if(d.unchanged){ show(`${home} 已经是官方目录 ${d.alias_of} 的别名，没有改动`, true); return; }
   show(`已设置：${home} = 官方目录 ${d.alias_of} 的只读别名（只改了 map.toml，没有碰官方目录）`, true); load();
 }
 async function aliasOff(home){

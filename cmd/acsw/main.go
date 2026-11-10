@@ -67,6 +67,7 @@ const usage = `acsw %s — agent cli switch（别名 code switch）
   acsw home cmd <home>                         # 生成 home\<home>\acsw-codex.cmd（给别的程序调用）
   acsw home alias <home> [官方CODEX_HOME]       # 把 home 设为官方目录的只读别名（默认 %%USERPROFILE%%\.codex）
   acsw home alias <home> --off                 # 取消别名
+                                               # 已是别名（指向别处）、在用 source 或目录里有文件时要确认：终端里问 y/N，否则加 --yes
   acsw home import-base <home> [--dry-run] [--from <官方CODEX_HOME>]   # 从官方 config.toml 导入和 provider 无关的设置（mcp_servers、features、sandbox、tui、projects…）
   acsw map <home> [项目目录]
   acsw unmap [项目目录]                         # 取消一条映射（必须是映射表里的目录本身）；在跑的 codex 不受影响
@@ -283,9 +284,9 @@ func cmdHome(app *core.App, rest []string) int {
 		fmt.Printf("已建 home %s：%s\n下一步：acsw use %s <source>\n", rest[1], app.Paths.HomeDir(rest[1]), rest[1])
 		return 0
 	case "alias":
-		f, pos, _, err := parseArgs(rest[1:], nil, set("off"))
+		f, pos, _, err := parseArgs(rest[1:], nil, set("off", "yes"))
 		if err != nil || len(pos) < 1 || len(pos) > 2 || (f["off"] != "" && len(pos) != 1) {
-			return fail(core.Usage("用法：acsw home alias <home> [官方CODEX_HOME，默认 %USERPROFILE%\\.codex]  或  acsw home alias <home> --off"))
+			return fail(core.Usage("用法：acsw home alias <home> [官方CODEX_HOME，默认 %USERPROFILE%\\.codex] [--yes]  或  acsw home alias <home> --off"))
 		}
 		if f["off"] != "" {
 			if err := app.ClearHomeAlias(pos[0]); err != nil {
@@ -300,13 +301,7 @@ func cmdHome(app *core.App, rest []string) int {
 		} else if dir, err = core.DefaultOfficialCodexHome(); err != nil {
 			return fail(err)
 		}
-		abs, err := app.SetHomeAlias(pos[0], dir)
-		if err != nil {
-			return fail(err)
-		}
-		fmt.Printf("已设置：home %s = 官方 CODEX_HOME %s 的只读别名（只改了 map.toml，没有碰官方目录）\n", pos[0], abs)
-		fmt.Printf("映射到 %s 的目录里运行 acsw codex，会直接用官方目录和它自己的登录启动 codex\n", pos[0])
-		return 0
+		return homeAlias(app, pos[0], dir, f["yes"] != "", os.Stdin, term.IsTerminal(int(os.Stdin.Fd())), os.Stdout, os.Stderr)
 	case "rm":
 		f, pos, _, err := parseArgs(rest[1:], nil, set("yes", "purge"))
 		if err != nil || len(pos) != 1 {

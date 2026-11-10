@@ -272,8 +272,10 @@ func TestHomeAliasRefusals(t *testing.T) {
 	tu.Must(t, a.Cred.Set(cred.Target("api1"), "k"))
 	_, err := a.Use(home.UseOptions{Home: "home2", Source: "api1"})
 	tu.Must(t, err)
-	if _, err := a.SetHomeAlias("home2", official); err == nil || !IsUsage(err) {
-		t.Fatal("在用 source 的 home 不能设别名", err)
+	if _, err := a.SetHomeAlias("home2", official); err == nil {
+		t.Fatal("在用 source 的 home 不确认不能设别名", err)
+	} else {
+		codeIs(t, err, exitcode.NeedConfirm)
 	}
 	if _, err := a.SetHomeAlias("home1", filepath.Join(official, "nope")); err == nil {
 		t.Fatal("不存在的目录应拒绝")
