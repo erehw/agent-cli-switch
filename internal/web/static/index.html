@@ -17,13 +17,19 @@ fieldset input[type=text],fieldset input[type=password]{width:420px}
 #env{background:#f7f7f7;padding:6px 10px;margin:6px 0 12px}
 .ops button{margin:1px 2px}
 td.dir{font-size:12px;word-break:break-all}
+#tabs{margin:12px 0 0;border-bottom:1px solid #ccc}
+#tabs a{display:inline-block;padding:6px 16px;margin-right:4px;border:1px solid #ccc;border-bottom:none;border-radius:4px 4px 0 0;background:#f3f3f3;color:#333;text-decoration:none;position:relative;top:1px}
+#tabs a.on{background:#fff;font-weight:bold}
+.tab{display:none;padding-top:8px}.tab.on{display:block}
 </style>
 </head>
 <body>
 <h2>acsw · agent cli switch</h2>
 <div id="env" class="mut">读取中…</div>
-<p>切换前请先退出该 home 里所有 codex。<label><input type="checkbox" id="dry"> 只预演（不改文件）</label>
- <button onclick="load()">刷新</button> <button onclick="doctor()">体检（doctor）</button></p>
+<p><button onclick="load()">刷新</button> <button onclick="doctor()">体检（doctor）</button> <span class="mut">体检结果显示在页面底部「结果」里</span></p>
+<div id="tabs"><a href="#codex" data-tab="codex">Codex</a><a href="#claude" data-tab="claude">Claude Code</a></div>
+<div id="tab-codex" class="tab">
+<p>切换前请先退出该 home 里所有 codex。<label><input type="checkbox" id="dry"> 只预演（不改文件）</label></p>
 <h3>Home</h3>
 <table id="homes"><thead><tr><th>home</th><th>当前 source</th><th>provider</th><th>运行中</th><th>CODEX_HOME 目录</th><th>项目目录</th><th>切换到</th><th>操作</th></tr></thead><tbody></tbody></table>
 <fieldset>
@@ -44,7 +50,8 @@ td.dir{font-size:12px;word-break:break-all}
 <button onclick="save()">保存</button> <button onclick="resetForm()">取消 / 改为新增</button>
 <div class="mut">key 只存进系统凭据管理器，页面不显示。订阅登录（openai）类型这里不能改。</div>
 </fieldset>
-<h3>Claude Code</h3>
+</div>
+<div id="tab-claude" class="tab">
 <div id="cenv" class="mut"></div>
 <table id="csources"><thead><tr><th>source</th><th>base_url</th><th>模型</th><th>key</th><th>settings 文件</th><th>启动命令</th><th>操作</th></tr></thead><tbody></tbody></table>
 <fieldset id="cform">
@@ -62,6 +69,7 @@ td.dir{font-size:12px;word-break:break-all}
 <button onclick="csave()">保存</button> <button onclick="cresetForm()">取消 / 改为新增</button>
 <div class="mut">key 只存进系统凭据管理器（acsw/claude/&lt;名称&gt;），页面不显示。启动：在终端运行 acsw claude &lt;名称&gt; [claude 参数]；或先「导出」，再 claude --settings &lt;文件&gt;。acsw 不改 ~\.claude，会话位置不变。</div>
 </fieldset>
+</div>
 <h3>结果</h3>
 <pre id="out">（无）</pre>
 <script>
@@ -90,7 +98,7 @@ async function load(){
   if(!r.ok){show(d.error,false); return;}
   sources = d.sources;
   renderClaude(d.claude || {sources:[]});
-  showEnv(d.env);
+  showEnv(d.env, (d.claude||{}).claude);
   $("m_home").innerHTML = d.homes.map(h=>`<option value="${esc(h.home)}">${esc(h.home)}</option>`).join("");
   const hb = document.querySelector("#homes tbody"); hb.innerHTML = "";
   for(const h of d.homes){
@@ -207,7 +215,7 @@ async function del(s){
 function renderClaude(c){
   csources = c.sources || [];
   const ci = c.claude || {};
-  $("cenv").innerHTML = `claude：${ci.found?esc(ci.path)+"（来自 "+esc(ci.from)+"）":'<span class="err">'+esc(ci.error||"找不到")+'</span>'} · settings 目录：${esc(c.settings_dir)} · 会话目录：${esc(c.sessions_dir)}`;
+  $("cenv").innerHTML = `${binInfo("claude", ci)} · settings 目录：${esc(c.settings_dir)} · 会话目录：${esc(c.sessions_dir)}`;
   const tb = document.querySelector("#csources tbody"); tb.innerHTML = "";
   if(!csources.length){ tb.innerHTML = `<tr><td colspan="7" class="mut">还没有 claude source</td></tr>`; }
   for(const s of csources){
@@ -312,12 +320,30 @@ async function use(home, source){
   show(t, r.ok);
   load();
 }
-function showEnv(e){
+function binInfo(name, b){
+  return b && b.found ? `${name}：${esc(b.path)}（来自 ${esc(b.from)}）` : `<span class="err">${name}：${esc((b&&b.error)||"找不到")}</span>`;
+}
+function showEnv(e, claude){
   if(!e){ return; }
   const from = e.root_from==="env" ? "来自环境变量 ACSW_ROOT" : "默认位置";
-  const cx = e.codex && e.codex.found ? `codex：${esc(e.codex.path)}（来自 ${esc(e.codex.from)}）` : `<span class="err">codex：${esc((e.codex&&e.codex.error)||"找不到")}</span>`;
-  $("env").innerHTML = `数据根目录：<b>${esc(e.root)}</b>（${from}） · acsw ${esc(e.acsw_version||"?")} · ${cx}`;
+  $("env").innerHTML = `数据根目录：<b>${esc(e.root)}</b>（${from}） · acsw ${esc(e.acsw_version||"?")}<br>${binInfo("codex", e.codex)} · ${binInfo("claude", claude)}`;
 }
+// 页签：#codex / #claude，记在地址栏和 localStorage 里。
+function setTab(t, push){
+  if(t!=="claude") t = "codex";
+  document.querySelectorAll("#tabs a").forEach(a=>a.classList.toggle("on", a.dataset.tab===t));
+  document.querySelectorAll(".tab").forEach(d=>d.classList.toggle("on", d.id==="tab-"+t));
+  try{ localStorage.setItem("acsw.tab", t); }catch(e){}
+  if(push && location.hash!=="#"+t) history.replaceState(null, "", "#"+t);
+}
+function initialTab(){
+  const h = location.hash.replace("#","");
+  if(h==="codex"||h==="claude") return h;
+  try{ return localStorage.getItem("acsw.tab")||"codex"; }catch(e){ return "codex"; }
+}
+document.querySelectorAll("#tabs a").forEach(a=>{ a.onclick = (ev)=>{ ev.preventDefault(); setTab(a.dataset.tab, true); }; });
+window.addEventListener("hashchange", ()=>setTab(initialTab(), false));
+setTab(initialTab(), true);
 function errText(d){ return "失败："+(d.error||"未知错误")+(d.kind?`（${d.kind}）`:""); }
 async function homeAdd(){
   const name = $("h_name").value.trim(); if(!name){ show("请填 home 名称",false); return; }
