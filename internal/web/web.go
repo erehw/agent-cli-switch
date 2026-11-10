@@ -59,6 +59,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/source/edit", s.sourceEdit)
 	mux.HandleFunc("POST /api/source/delete", s.sourceDelete)
 	mux.HandleFunc("POST /api/source/models", s.sourceModels)
+	mux.HandleFunc("POST /api/claude/add", s.claudeAdd)
+	mux.HandleFunc("POST /api/claude/edit", s.claudeEdit)
+	mux.HandleFunc("POST /api/claude/export", s.claudeExport)
 	mux.HandleFunc("POST /api/home/add", s.homeAdd)
 	mux.HandleFunc("POST /api/home/alias", s.homeAlias)
 	mux.HandleFunc("POST /api/home/cmd", s.homeCmd)
@@ -174,6 +177,9 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	var sv []sourceView
 	for _, x := range srcs {
+		if x.Meta.IsClaude() {
+			continue // claude source 单独放在 claude 部分，不出现在 codex 的切换列表里
+		}
 		sv = append(sv, sourceView{Name: x.Name, Type: x.Meta.Type, BaseURL: x.Meta.BaseURL, Model: x.Meta.Model, HasLogin: x.HasLogin, UsedBy: x.UsedBy})
 	}
 	hv := []homeView{}
@@ -188,7 +194,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	if sv == nil {
 		sv = []sourceView{}
 	}
-	writeJSON(w, 200, map[string]any{"env": s.App.Env(), "homes": hv, "sources": sv})
+	cs, err := s.App.ClaudeStatus()
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"env": s.App.Env(), "homes": hv, "sources": sv, "claude": cs})
 }
 
 func (s *Server) use(w http.ResponseWriter, r *http.Request) {

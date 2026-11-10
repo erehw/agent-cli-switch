@@ -33,7 +33,7 @@ td.dir{font-size:12px;word-break:break-all}
 <div class="mut">删除 home：要求没有项目映射、没有 codex 在跑；目录（含 codex 会话）移到备份区 .acsw-backup。彻底删除只能在命令行用 acsw home rm &lt;名称&gt; --purge --yes。官方别名 home 删除时不会动官方目录。</div>
 </fieldset>
 <div class="mut">「复制」只复制启动命令（进入项目目录后运行 acsw codex --expect-home &lt;该目录映射的 home&gt;），粘贴到终端运行；页面不会启动 codex。命令格式：<label><input type="radio" name="shell" value="cmd" onchange="setShell(this.value)"> cmd</label> <label><input type="radio" name="shell" value="ps" onchange="setShell(this.value)"> PowerShell</label></div>
-<h3>Source</h3>
+<h3>Source（codex）</h3>
 <table id="sources"><thead><tr><th>source</th><th>类型</th><th>base_url / model</th><th>登录或 key</th><th>被哪些 home 使用</th><th>操作</th></tr></thead><tbody></tbody></table>
 <fieldset id="form">
 <legend id="formTitle">新增 custom source（API）</legend>
@@ -44,11 +44,31 @@ td.dir{font-size:12px;word-break:break-all}
 <button onclick="save()">保存</button> <button onclick="resetForm()">取消 / 改为新增</button>
 <div class="mut">key 只存进系统凭据管理器，页面不显示。订阅登录（openai）类型这里不能改。</div>
 </fieldset>
+<h3>Claude Code</h3>
+<div id="cenv" class="mut"></div>
+<table id="csources"><thead><tr><th>source</th><th>base_url</th><th>模型</th><th>key</th><th>settings 文件</th><th>启动命令</th><th>操作</th></tr></thead><tbody></tbody></table>
+<fieldset id="cform">
+<legend id="cformTitle">新增 claude source</legend>
+<label>名称 <input type="text" id="c_name" autocomplete="off" placeholder="例如 gw1（不能叫 export 或 key）"></label>
+<label>base_url <input type="text" id="c_base" autocomplete="off" placeholder="https://gateway.example.com（不带 /v1）"></label>
+<label>model <input type="text" id="c_model" autocomplete="off" placeholder="主模型，必填"></label>
+<label>opus 模型 <input type="text" id="c_opus" autocomplete="off" placeholder="可空"></label>
+<label>sonnet 模型 <input type="text" id="c_sonnet" autocomplete="off" placeholder="可空"></label>
+<label>haiku 模型 <input type="text" id="c_haiku" autocomplete="off" placeholder="可空"></label>
+<label>fable 模型 <input type="text" id="c_fable" autocomplete="off" placeholder="可空"></label>
+<label>key 模式 <select id="c_mode"><option value="helper">helper（默认，key 不落盘）</option><option value="plain">plain（key 明文写进 settings 文件）</option></select></label>
+<label>附加环境变量（每行 名=值，名字不能含 KEY/TOKEN/SECRET）<br><textarea id="c_env" rows="3" cols="60" autocomplete="off"></textarea></label>
+<label>key <input type="password" id="c_key" autocomplete="new-password"> <span id="ckeyHint" class="mut">必填</span></label>
+<button onclick="csave()">保存</button> <button onclick="cresetForm()">取消 / 改为新增</button>
+<div class="mut">key 只存进系统凭据管理器（acsw/claude/&lt;名称&gt;），页面不显示。启动：在终端运行 acsw claude &lt;名称&gt; [claude 参数]；或先「导出」，再 claude --settings &lt;文件&gt;。acsw 不改 ~\.claude，会话位置不变。</div>
+</fieldset>
 <h3>结果</h3>
 <pre id="out">（无）</pre>
 <script>
 const TOKEN = "{{.Token}}";
 let sources = [];
+let csources = [];
+let cediting = "";
 let editing = "";
 let shell = (()=>{ try{ return localStorage.getItem("acsw.shell")==="ps" ? "ps" : "cmd"; }catch(e){ return "cmd"; } })();
 function setShell(v){ shell = v==="ps" ? "ps" : "cmd"; try{ localStorage.setItem("acsw.shell", shell); }catch(e){} load(); }
@@ -69,6 +89,7 @@ async function load(){
   const [r, d] = await get("/api/status");
   if(!r.ok){show(d.error,false); return;}
   sources = d.sources;
+  renderClaude(d.claude || {sources:[]});
   showEnv(d.env);
   $("m_home").innerHTML = d.homes.map(h=>`<option value="${esc(h.home)}">${esc(h.home)}</option>`).join("");
   const hb = document.querySelector("#homes tbody"); hb.innerHTML = "";
@@ -181,6 +202,103 @@ async function del(s){
   if(!r.ok){show("失败："+d.error,false); load(); return;}
   show(`已删除 source ${s.name}\n  目录已移到：${d.backup_dir}`, true);
   if(editing===s.name) resetForm();
+  load();
+}
+function renderClaude(c){
+  csources = c.sources || [];
+  const ci = c.claude || {};
+  $("cenv").innerHTML = `claude：${ci.found?esc(ci.path)+"（来自 "+esc(ci.from)+"）":'<span class="err">'+esc(ci.error||"找不到")+'</span>'} · settings 目录：${esc(c.settings_dir)} · 会话目录：${esc(c.sessions_dir)}`;
+  const tb = document.querySelector("#csources tbody"); tb.innerHTML = "";
+  if(!csources.length){ tb.innerHTML = `<tr><td colspan="7" class="mut">还没有 claude source</td></tr>`; }
+  for(const s of csources){
+    const m = s.models||{};
+    const ms = ["model","opus","sonnet","haiku","fable"].filter(k=>m[k]).map(k=>`${k}=${esc(m[k])}`).join("<br>");
+    const st = s.settings||{};
+    const file = st.exists ? `${esc(st.path)}${st.current?"":' <span class="warn">（和当前设置不一致，启动时会重新生成）</span>'}` : '<span class="mut">（还没生成，启动或导出时生成）</span>';
+    const plain = s.plain ? `<div class="warn">明文文件：${esc(s.plain.path)}</div>` : "";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(s.name)}</td><td>${esc(s.base_url)}</td><td>${ms}</td><td>${s.has_key?"有":'<span class="err">缺</span>'}<div class="mut">${esc(s.key_mode)}</div></td><td class="dir">${file}${plain}</td>
+      <td><button class="cp">复制</button> <code>${esc(s.launch)}</code> <span class="cpok ok"></span></td>
+      <td class="ops"><button class="m">查模型</button> <button class="e">编辑</button> <button class="xh">导出 helper</button> <button class="xp">导出明文</button> <button class="d">删除</button></td>`;
+    tr.querySelector(".cp").onclick = ()=>copyCmd(s.launch, tr.querySelector(".cpok"));
+    tr.querySelector(".m").onclick = ()=>models(s);
+    tr.querySelector(".e").onclick = ()=>cstartEdit(s);
+    tr.querySelector(".xh").onclick = ()=>cexport(s, "helper");
+    tr.querySelector(".xp").onclick = ()=>cexport(s, "plain");
+    tr.querySelector(".d").onclick = ()=>cdel(s);
+    tb.appendChild(tr);
+  }
+}
+function cresetForm(){
+  cediting = "";
+  $("cformTitle").textContent = "新增 claude source";
+  $("c_name").value = ""; $("c_name").readOnly = false;
+  for(const id of ["c_base","c_model","c_opus","c_sonnet","c_haiku","c_fable","c_env","c_key"]) $(id).value = "";
+  $("c_mode").value = "helper";
+  $("ckeyHint").textContent = "必填";
+}
+function cstartEdit(s){
+  cediting = s.name;
+  const m = s.models||{};
+  $("cformTitle").textContent = "编辑 claude source：" + s.name + "（不能改名）";
+  $("c_name").value = s.name; $("c_name").readOnly = true;
+  $("c_base").value = s.base_url||""; $("c_model").value = m.model||""; $("c_opus").value = m.opus||""; $("c_sonnet").value = m.sonnet||""; $("c_haiku").value = m.haiku||""; $("c_fable").value = m.fable||"";
+  $("c_mode").value = s.key_mode==="plain" ? "plain" : "helper";
+  // 附加变量的值不在状态里（只有名字），编辑时留空表示不改
+  $("c_env").value = ""; $("c_env").placeholder = (s.extra_env||[]).length ? "现有："+s.extra_env.join(", ")+"（留空不改；填了就整体替换；只填 - 表示清空）" : "";
+  $("c_key").value = "";
+  $("ckeyHint").textContent = "留空表示不改（当前：" + (s.has_key?"有":"缺") + "）";
+  $("c_base").focus();
+}
+function parseEnvText(t){
+  const env = {};
+  for(const line of t.split(/\r?\n/)){
+    const l = line.trim(); if(!l) continue;
+    const i = l.indexOf("=");
+    if(i<=0) throw new Error(`附加环境变量要写成 名=值：${l}`);
+    env[l.slice(0,i).trim()] = l.slice(i+1);
+  }
+  return env;
+}
+async function csave(){
+  const body = {name:$("c_name").value.trim(), base_url:$("c_base").value.trim(), model:$("c_model").value.trim(), opus_model:$("c_opus").value.trim(), sonnet_model:$("c_sonnet").value.trim(), haiku_model:$("c_haiku").value.trim(), fable_model:$("c_fable").value.trim(), key_mode:$("c_mode").value, key:$("c_key").value};
+  if(!body.name){show("请填名称",false); return;}
+  const et = $("c_env").value.trim();
+  try{
+    if(et==="-") body.extra_env = {};
+    else if(et) body.extra_env = parseEnvText(et);
+  }catch(e){ show(e.message,false); return; }
+  if(cediting){
+    const [r,d] = await post("/api/claude/edit", body);
+    $("c_key").value = "";
+    if(!r.ok){show("失败："+d.error,false); return;}
+    const res = d.result;
+    let t = `已保存 claude source ${res.name}：` + (res.meta_changed?"设置已改":"设置未变") + "，" + (res.key_changed?"key 已更新":"key 未改") + "\n";
+    (res.notes||[]).forEach(n=>t+="  "+n+"\n");
+    show(t, true);
+  }else{
+    if(!body.key){show("新增时 key 必填",false); return;}
+    if(!body.extra_env) delete body.extra_env;
+    const [r,d] = await post("/api/claude/add", body);
+    $("c_key").value = "";
+    if(!r.ok){show("失败："+d.error,false); return;}
+    show(`已新增 claude source ${d.name}\n  `+(d.notes||[]).join("\n  ")+`\n  启动：${d.launch}`, true);
+  }
+  cresetForm(); load();
+}
+async function cexport(s, mode){
+  if(mode==="plain" && !confirm(`导出 ${s.name} 的明文 settings 文件？\nkey 会以明文写进 ${"<settings 目录>\\"+s.name+".plain.json"}，不要提交、不要发给别人。`)) return;
+  const [r,d] = await post("/api/claude/export", {name:s.name, mode, confirm: mode==="plain"});
+  if(!r.ok){show("导出失败："+d.error,false); return;}
+  show(`已导出（${d.mode}）：${d.path}\n用法：${d.command}` + (d.warning?`\n注意：${d.warning}`:""), true);
+  load();
+}
+async function cdel(s){
+  if(!confirm(`删除 claude source ${s.name}？\n凭据管理器里的 key 会删除，生成的 settings 文件会删除，目录移到备份区（.acsw-backup）。`)) return;
+  const [r,d] = await post("/api/source/delete", {name:s.name});
+  if(!r.ok){show("失败："+d.error,false); load(); return;}
+  show(`已删除 claude source ${s.name}\n  目录已移到：${d.backup_dir}`, true);
+  if(cediting===s.name) cresetForm();
   load();
 }
 async function use(home, source){
