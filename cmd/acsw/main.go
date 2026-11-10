@@ -67,6 +67,7 @@ const usage = `acsw %s — agent cli switch（别名 code switch）
   acsw home cmd <home>                         # 生成 home\<home>\acsw-codex.cmd（给别的程序调用）
   acsw home alias <home> [官方CODEX_HOME]       # 把 home 设为官方目录的只读别名（默认 %%USERPROFILE%%\.codex）
   acsw home alias <home> --off                 # 取消别名
+  acsw home import-base <home> [--dry-run] [--from <官方CODEX_HOME>]   # 从官方 config.toml 导入和 provider 无关的设置（mcp_servers、features、sandbox、tui、projects…）
   acsw map <home> [项目目录]
   acsw unmap [项目目录]                         # 取消一条映射（必须是映射表里的目录本身）；在跑的 codex 不受影响
   acsw use <home> <source> [--dry-run] [--strict]
@@ -333,6 +334,17 @@ func cmdHome(app *core.App, rest []string) int {
 		if r.AliasOf != "" {
 			fmt.Printf("官方目录 %s 没有改动\n", r.AliasOf)
 		}
+		return 0
+	case "import-base":
+		f, pos, _, err := parseArgs(rest[1:], set("from"), set("dry-run"))
+		if err != nil || len(pos) != 1 {
+			return fail(core.Usage("用法：acsw home import-base <home> [--dry-run] [--from <官方CODEX_HOME，默认 %USERPROFILE%\\.codex>]"))
+		}
+		r, err := app.ImportBase(pos[0], f["from"], f["dry-run"] != "")
+		if err != nil {
+			return fail(err)
+		}
+		printImportBase(os.Stdout, r)
 		return 0
 	case "cmd":
 		if len(rest) != 2 {

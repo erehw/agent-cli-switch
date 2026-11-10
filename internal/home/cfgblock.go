@@ -32,6 +32,28 @@ func tomlStr(s string) (string, error) {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`, nil
 }
 
+// SplitManaged 把 config.toml 拆成 acsw 的 top 块（含标记行）、块外内容、tables 块（含标记行）。没有的部分为空串。
+func SplitManaged(text string) (top, user, tables string) {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	var t, u, b []string
+	cur := &u
+	for _, l := range lines {
+		switch strings.TrimSpace(l) {
+		case topStart:
+			cur = &t
+		case tabStart:
+			cur = &b
+		}
+		*cur = append(*cur, l)
+		switch strings.TrimSpace(l) {
+		case topEnd, tabEnd:
+			cur = &u
+		}
+	}
+	j := func(x []string) string { return strings.Trim(strings.Join(x, "\n"), "\n") }
+	return j(t), j(u), j(b)
+}
+
 // stripBlocks 去掉已有的 acsw 标记块。
 func stripBlocks(text string) string {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")

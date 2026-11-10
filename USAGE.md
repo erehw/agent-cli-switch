@@ -81,6 +81,17 @@ acsw home alias home1 --off    # 取消 / remove
 
 Afterwards `acsw codex` in directories mapped to home1 uses the official `.codex` and its own login without injecting a source or key; `acsw last` reads sessions read-only; `acsw use` on home1 is refused (99994008); acsw never writes into the official `.codex`.
 
+## 把官方配置里的 MCP 等设置带到 home / Bring MCP and other settings from the official config into a home
+
+```
+acsw home import-base home2 --dry-run   # 先看会改哪些键 / see which keys would change
+acsw home import-base home2             # 再导入 / then import
+```
+
+只导入和 provider 无关的设置（MCP、features、sandbox、审批、tui、notify、项目信任等）；`model`、`model_provider(s)`、登录和密钥相关的不碰，home 自己的 provider/model 保留。官方 `config.toml` 只读；home 原来的 `config.toml` 先备份到 `.acsw-backup`。别名 home 和正在跑 codex 的 home 会拒绝。网页 Codex 页签里每个 home 的「导入官方基础配置」按钮做同样的事（先预演，确认后写）。
+
+Only provider-independent settings are imported (MCP, features, sandbox, approval, tui, notify, project trust, ...); `model`, `model_provider(s)` and anything about login or keys are left alone, and the home keeps its own provider/model. The official `config.toml` is read-only; the home's old `config.toml` is backed up to `.acsw-backup` first. Alias homes and homes with codex running are refused. The "import official base config" button per home in the web UI's Codex tab does the same (preview first, writes after you confirm).
+
 ## Claude Code
 
 ```

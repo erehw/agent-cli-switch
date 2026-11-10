@@ -38,6 +38,8 @@ type Server struct {
 	Token   string
 	Port    int
 	AcswExe string // 生成 acsw-codex.cmd 时写进去的 acsw.exe 完整路径
+	// OfficialDir 是导入基础配置时读取的官方 CODEX_HOME；空时用 %USERPROFILE%\.codex（测试里指向假目录）。
+	OfficialDir string
 }
 
 type sourceView struct {
@@ -67,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/home/alias", s.homeAlias)
 	mux.HandleFunc("POST /api/home/cmd", s.homeCmd)
 	mux.HandleFunc("POST /api/home/rm", s.homeRm)
+	mux.HandleFunc("POST /api/home/import-base", s.homeImportBase)
 	mux.HandleFunc("POST /api/map", s.mapProject)
 	mux.HandleFunc("POST /api/unmap", s.unmapProject)
 	mux.HandleFunc("GET /api/doctor", s.needToken(s.doctor))

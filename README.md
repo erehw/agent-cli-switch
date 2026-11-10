@@ -65,6 +65,7 @@ acsw home add home1
 acsw home rm home3 [--purge] --yes        # 见下文 / see below
 acsw home cmd home2                       # 生成 home\home2\acsw-codex.cmd / generate a launcher script
 acsw home alias home1 [dir] | --off       # 官方 .codex 只读别名 / read-only alias of the official .codex
+acsw home import-base home2 [--dry-run]   # 导入官方 config.toml 里和 provider 无关的设置 / import provider-independent settings from the official config.toml
 acsw map home1 [项目目录 project-dir]      # 默认当前目录；最长前缀优先 / default: cwd; longest prefix wins
 acsw unmap [项目目录 project-dir]          # 取消一条映射 / remove one mapping
 acsw use home1 plus1 [--dry-run] [--strict]
@@ -235,6 +236,20 @@ English:
 - `acsw last` and the web "recent sessions" copy the state database (with `-wal`) to a temp directory and query the copy, falling back to scanning `sessions`; nothing is created in the official directory.
 - acsw never writes the official directory: `use` (CLI and web) is refused (99994008). Run records live in acsw's own `home\<home>\.acsw-run`.
 
+### `acsw home import-base` / Import the official base config
+
+```
+acsw home import-base home2 --dry-run            # 预演：只列出要新增/覆盖/跳过的键名 / preview: key names only
+acsw home import-base home2                      # 正式导入 / import
+acsw home import-base home2 --from D:\x\.codex   # 指定官方目录 / explicit official directory
+```
+
+从官方 `.codex\config.toml`（只读，从不写它）把和 provider 无关的设置导入某个 home 的 `config.toml`：`mcp_servers`、`features`、`tools`、`hooks`、`sandbox_mode`/`sandbox_workspace_write`、`approval_policy`、`tui`、`notify`、`history`、`projects`（信任设置）、`windows`、`personality` 等白名单里的键；`profiles` 只导入不涉及 provider/模型的条目。永远不导入：`model_provider`、`model_providers`、`model`、`model_reasoning_*` 等 `model*` 键和任何登录/密钥相关的键；不在白名单里的键（如 `service_tier`、`plugins`、`marketplaces`）跳过并列出。home 自己的 provider/model 行（acsw 管理块）原样保留；表按条目合并（home 独有的 MCP、项目信任保留，同名的用官方的覆盖）。写入前原 `config.toml` 备份到 `<数据根目录>\.acsw-backup\<时间>-home-<名称>-config.toml`；acsw 管理块外的注释会丢失（备份里有）。只显示键名，不显示值（`mcp_servers` 的 `env` 可能有密钥）。别名 home 拒绝（99994008）；home 里有 codex 在跑时拒绝（99994009），预演只提醒。网页 Codex 页签每个非别名 home 有「导入官方基础配置」按钮：先预演显示要新增/覆盖的键，确认后才写。
+
+English:
+
+Imports provider-independent settings from the official `.codex\config.toml` (read-only, never written) into one home's `config.toml`: whitelisted keys such as `mcp_servers`, `features`, `tools`, `hooks`, `sandbox_mode`/`sandbox_workspace_write`, `approval_policy`, `tui`, `notify`, `history`, `projects` (trust), `windows`, `personality`; `profiles` entries are imported only when they do not touch providers or models. Never imported: `model_provider`, `model_providers`, `model`, `model_reasoning_*` and other `model*` keys, and anything about login or keys; keys outside the whitelist (e.g. `service_tier`, `plugins`, `marketplaces`) are skipped and listed. The home's own provider/model lines (the acsw blocks) are kept verbatim; tables are merged per entry (home-only MCP servers and project trust survive, same-named entries take the official value). Before writing, the old `config.toml` is backed up to `<root>\.acsw-backup\<time>-home-<name>-config.toml`; comments outside the acsw blocks are lost (they are in the backup). Only key names are shown, never values (`env` under `mcp_servers` may hold secrets). Refused for an alias home (99994008) and while codex runs in the home (99994009); a dry run only warns. In the web UI each non-alias home in the Codex tab has an "import official base config" button: it shows a dry-run preview of the keys to add/replace and writes only after you confirm.
+
 ### `acsw use <home> <source>` 依次做什么 / What `use` does
 
 1. 检查 home 空闲：acsw 登记的进程都已退出，否则拒绝；不是 acsw 启动的 `codex.exe` 只提醒，`--strict` 时拒绝。
@@ -311,13 +326,13 @@ Three ways, all built on `claude --settings <file>`. Every generated file sets t
 
 ### `acsw ui`
 
-本机网页，和命令行用同一套 `internal/core`。页面分 Codex 和 Claude Code 两个页签（记在地址栏 `#codex` / `#claude` 和浏览器本地存储里），页签上方是公共信息：数据根目录、版本、codex 和 claude 路径、体检按钮。新增/编辑 source 的表单里有「从上游获取模型」：已保存的 source 由服务端用凭据管理器里的 key 请求 `/models`（claude 是 `/v1/models`），key 不发给浏览器；新 source 用表单里输入的 base_url 和 key，只用于这一次请求，不保存、不记录；编辑时改了 base_url 又没输入 key 会拒绝，免得把已保存的 key 发到新地址。结果放进下拉框和输入框的候选列表（仍可手填），401/403、超时、非标准响应会分别提示。能做的事：顶部显示数据根目录（及来源）、版本、codex 路径；新增/删除 home（删除只移到备份区）；设置或取消官方别名；生成 `.cmd`；映射和取消映射项目目录（映射要求完整路径且目录存在）；切换 source（可预演）；custom source 的新增/编辑/删除/查模型；复制启动命令（cmd / PowerShell）；每个 home 的最近会话；体检；Claude Code 部分：claude source 的新增/编辑/删除/查模型、复制 `acsw claude <source>`、导出 helper 或明文 settings 文件（明文要确认）。openai 登录、`--purge` 只能在命令行做。
+本机网页，和命令行用同一套 `internal/core`。页面分 Codex 和 Claude Code 两个页签（记在地址栏 `#codex` / `#claude` 和浏览器本地存储里），页签上方是公共信息：数据根目录、版本、codex 和 claude 路径、体检按钮。新增/编辑 source 的表单里有「从上游获取模型」：已保存的 source 由服务端用凭据管理器里的 key 请求 `/models`（claude 是 `/v1/models`），key 不发给浏览器；新 source 用表单里输入的 base_url 和 key，只用于这一次请求，不保存、不记录；编辑时改了 base_url 又没输入 key 会拒绝，免得把已保存的 key 发到新地址。结果放进下拉框和输入框的候选列表（仍可手填），401/403、超时、非标准响应会分别提示。能做的事：顶部显示数据根目录（及来源）、版本、codex 路径；新增/删除 home（删除只移到备份区）；设置或取消官方别名；从官方 config.toml 导入基础配置（先预演再确认）；生成 `.cmd`；映射和取消映射项目目录（映射要求完整路径且目录存在）；切换 source（可预演）；custom source 的新增/编辑/删除/查模型；复制启动命令（cmd / PowerShell）；每个 home 的最近会话；体检；Claude Code 部分：claude source 的新增/编辑/删除/查模型、复制 `acsw claude <source>`、导出 helper 或明文 settings 文件（明文要确认）。openai 登录、`--purge` 只能在命令行做。
 
 安全：只监听 `127.0.0.1`；Host 只认 127.0.0.1 和 localhost（防 DNS 重绑定）；带 `Origin` 头的请求必须同源；所有 `/api/` 请求（包括 GET）都要页面里嵌的随机 token（`X-ACSW-Token`）；POST 只收 JSON 且限制大小；不能被嵌进别的页面；服务端设置了读、写、空闲超时。
 
 English:
 
-A local web page that uses the same `internal/core` as the CLI. It has two tabs, Codex and Claude Code (remembered in the URL hash `#codex` / `#claude` and in local storage); shared info sits above the tabs: data root, version, codex and claude paths, the doctor button. The add/edit source forms have "fetch models from upstream": for a saved source the server calls `/models` (`/v1/models` for claude) with the key from Credential Manager, and the key never reaches the browser; for a new source the base_url and key typed in the form are used for that one request only, never stored or logged; when editing, a changed base_url without a typed key is refused so the saved key is not sent to a new address. Results fill a dropdown and the inputs' suggestion list (free text still allowed); 401/403, timeouts and non-standard responses are reported separately. It shows the data root (and its source), version and codex path; adds/removes homes (removal only moves to the backup area); sets or clears the official alias; generates `.cmd` scripts; maps and unmaps project directories (mapping needs an absolute, existing directory); switches sources (with dry run); adds/edits/deletes custom sources and queries their models; copies launch commands (cmd / PowerShell); lists recent sessions per home; runs doctor; and in the Claude Code section adds/edits/deletes claude sources, queries their models, copies `acsw claude <source>`, and exports helper or plaintext settings files (plaintext needs confirmation). openai login and `--purge` are CLI-only.
+A local web page that uses the same `internal/core` as the CLI. It has two tabs, Codex and Claude Code (remembered in the URL hash `#codex` / `#claude` and in local storage); shared info sits above the tabs: data root, version, codex and claude paths, the doctor button. The add/edit source forms have "fetch models from upstream": for a saved source the server calls `/models` (`/v1/models` for claude) with the key from Credential Manager, and the key never reaches the browser; for a new source the base_url and key typed in the form are used for that one request only, never stored or logged; when editing, a changed base_url without a typed key is refused so the saved key is not sent to a new address. Results fill a dropdown and the inputs' suggestion list (free text still allowed); 401/403, timeouts and non-standard responses are reported separately. It shows the data root (and its source), version and codex path; adds/removes homes (removal only moves to the backup area); sets or clears the official alias; imports the official base config (preview, then confirm); generates `.cmd` scripts; maps and unmaps project directories (mapping needs an absolute, existing directory); switches sources (with dry run); adds/edits/deletes custom sources and queries their models; copies launch commands (cmd / PowerShell); lists recent sessions per home; runs doctor; and in the Claude Code section adds/edits/deletes claude sources, queries their models, copies `acsw claude <source>`, and exports helper or plaintext settings files (plaintext needs confirmation). openai login and `--purge` are CLI-only.
 
 Security: listens on `127.0.0.1` only; Host must be 127.0.0.1 or localhost (DNS rebinding); requests with an `Origin` header must be same-origin; every `/api/` request, GET included, needs the random token embedded in the page (`X-ACSW-Token`); POST bodies must be JSON and size-limited; framing is denied; read/write/idle timeouts are set.
 

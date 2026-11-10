@@ -109,13 +109,14 @@ async function load(){
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${esc(h.home)}${h.problem?`<div class="err">${esc(h.problem)}</div>`:""}</td><td>${h.alias_of?`官方别名<div class="mut">${esc(h.alias_of)}（只读）</div>`:esc(h.source||"（未设置）")}</td><td>${esc(h.provider)}</td><td>${h.running}</td><td class="dir">${esc(h.dir)}</td><td class="proj">${(h.launches||[]).map((l,i)=>`<div class="launch"><div>${esc(l.dir)} <button class="um" data-i="${i}">取消映射</button></div>${l[shell]?`<button class="cp" data-i="${i}" title="${esc(l[shell])}">复制</button> <code>${esc(l[shell])}</code> <span class="cpok ok"></span>`:""}${l.warn?`<div class="warn">${esc(l.warn)}</div>`:""}</div>`).join("")}</td>
       <td>${h.alias_of?`<span class="mut">官方目录别名，不能切换 source</span>`:`<select>${opts}</select> <button class="sw">切换</button>`}</td>
-      <td class="ops"><button class="rc">最近会话</button> <button class="hc">生成 .cmd</button> ${h.alias_of?`<button class="ao">取消别名</button>`:(h.source?"":`<button class="as">设为官方别名</button>`)} <button class="rm">删除</button></td>`;
+      <td class="ops"><button class="rc">最近会话</button> <button class="hc">生成 .cmd</button> ${h.alias_of?"":`<button class="ib">导入官方基础配置</button>`} ${h.alias_of?`<button class="ao">取消别名</button>`:(h.source?"":`<button class="as">设为官方别名</button>`)} <button class="rm">删除</button></td>`;
     if(!h.alias_of) tr.querySelector("button.sw").onclick = ()=>use(h.home, tr.querySelector("select").value);
     tr.querySelectorAll("button.um").forEach(b=>{ b.onclick = ()=>unmapDir(h.launches[+b.dataset.i].dir); });
     tr.querySelector("button.rc").onclick = ()=>recent(h.home);
     tr.querySelector("button.hc").onclick = ()=>homeCmd(h.home);
     tr.querySelector("button.rm").onclick = ()=>homeRm(h);
     if(tr.querySelector("button.as")) tr.querySelector("button.as").onclick = ()=>aliasSet(h.home);
+    if(tr.querySelector("button.ib")) tr.querySelector("button.ib").onclick = ()=>importBase(h.home);
     if(tr.querySelector("button.ao")) tr.querySelector("button.ao").onclick = ()=>aliasOff(h.home);
     tr.querySelectorAll("button.cp").forEach(b=>{ b.onclick = ()=>copyCmd(h.launches[+b.dataset.i][shell], b.parentNode.querySelector(".cpok")); });
     hb.appendChild(tr);
@@ -442,6 +443,28 @@ async function recent(home){
   for(const x of d.threads) t += `  ${x.id}  ${x.updated? new Date(x.updated).toLocaleString() : "-"}  ${x.title}\n      ${x.cwd}\n`;
   if(d.threads.length) t += `接续：在对应项目目录运行 acsw codex resume ${d.threads[0].id}`;
   show(t, true);
+}
+// 从官方 .codex\config.toml 导入和 provider 无关的设置：先预演给出要改的键名，确认后再写。
+function importText(x){
+  const act = {add:"新增", replace:"覆盖"};
+  let t = `从 ${x.from}（只读）导入到 ${x.config}\n`;
+  (x.changes||[]).forEach(c=>t+=`  ${act[c.action]||c.action}  ${c.key}\n`);
+  if((x.unchanged||[]).length) t += `  已相同，不动：${x.unchanged.length} 项\n`;
+  (x.skipped||[]).forEach(s=>t+=`  跳过  ${s.key}：${s.reason}\n`);
+  (x.warnings||[]).forEach(w=>t+=`注意：${w}\n`);
+  return t;
+}
+async function importBase(home){
+  const [r,d] = await post("/api/home/import-base", {home, dry_run:true});
+  if(!r.ok){ show(errText(d),false); return; }
+  const x = d.result;
+  show("预演（还没改）：\n"+importText(x), true);
+  if(!(x.changes||[]).length) return;
+  if(!confirm(`把官方 config.toml 里这些和 provider 无关的设置导入 ${home}？\n\n`+x.changes.map(c=>(c.action==="add"?"新增 ":"覆盖 ")+c.key).join("\n")+`\n\nprovider/model/登录相关的不动；原 config.toml 会先备份。`)) return;
+  const [r2,d2] = await post("/api/home/import-base", {home, dry_run:false});
+  if(!r2.ok){ show(errText(d2),false); return; }
+  const y = d2.result;
+  show("已导入：\n"+importText(y)+(y.backup_file?`原 config.toml 备份在 ${y.backup_file}`:""), true);
 }
 async function doctor(){
   const [r,d] = await get("/api/doctor");
