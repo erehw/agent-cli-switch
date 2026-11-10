@@ -67,7 +67,7 @@ func TestSourceAddEditDelete(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 	// status 不带 key
-	w = do(h, "GET", "/api/status", host, "", "")
+	w = do(h, "GET", "/api/status", host, "tok123", "")
 	if strings.Contains(w.Body.String(), "secret") || !strings.Contains(w.Body.String(), `"name":"api9"`) {
 		t.Fatal(w.Body.String())
 	}

@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"golang.org/x/term"
 
@@ -548,7 +547,7 @@ func serveUI(app *core.App, port int, open bool) int {
 	if open {
 		openBrowser(url)
 	}
-	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	srv := s.HTTPServer()
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fail(err)
 	}

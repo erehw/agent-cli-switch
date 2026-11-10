@@ -46,10 +46,10 @@ func TestIndexHasToken(t *testing.T) {
 
 func TestHostGuard(t *testing.T) {
 	s, _ := newServer(t)
-	if w := do(s.Handler(), "GET", "/api/status", "evil.example:7799", "", ""); w.Code != 403 {
+	if w := do(s.Handler(), "GET", "/api/status", "evil.example:7799", "tok123", ""); w.Code != 403 {
 		t.Fatal(w.Code)
 	}
-	if w := do(s.Handler(), "GET", "/api/status", "localhost:7799", "", ""); w.Code != 200 {
+	if w := do(s.Handler(), "GET", "/api/status", "localhost:7799", "tok123", ""); w.Code != 200 {
 		t.Fatal(w.Code)
 	}
 }
@@ -57,7 +57,7 @@ func TestHostGuard(t *testing.T) {
 func TestStatusAndUse(t *testing.T) {
 	s, p := newServer(t)
 	h := s.Handler()
-	w := do(h, "GET", "/api/status", "127.0.0.1:7799", "", "")
+	w := do(h, "GET", "/api/status", "127.0.0.1:7799", "tok123", "")
 	var st struct {
 		Homes   []map[string]any `json:"homes"`
 		Sources []map[string]any `json:"sources"`

@@ -15,7 +15,7 @@ func TestStatusHasLaunchCommands(t *testing.T) {
 	m.SetProject(`M:\work\my proj`, "home1")
 	tu.Must(t, config.SaveMap(p, m))
 
-	w := do(s.Handler(), "GET", "/api/status", host, "", "")
+	w := do(s.Handler(), "GET", "/api/status", host, "tok123", "")
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}

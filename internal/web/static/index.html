@@ -51,7 +51,7 @@ async function post(url, body){
 }
 function show(text, ok){ const o=$("out"); o.textContent=text; o.className=ok?"ok":"err"; }
 async function load(){
-  const r = await fetch("/api/status"); const d = await r.json();
+  const r = await fetch("/api/status",{headers:{"X-ACSW-Token":TOKEN}}); const d = await r.json();
   if(!r.ok){show(d.error,false); return;}
   sources = d.sources;
   const hb = document.querySelector("#homes tbody"); hb.innerHTML = "";

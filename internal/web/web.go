@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"acsw/internal/core"
 	"acsw/internal/home"
@@ -51,7 +52,7 @@ type sourceView struct {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
-	mux.HandleFunc("GET /api/status", s.status)
+	mux.HandleFunc("GET /api/status", s.needToken(s.status))
 	mux.HandleFunc("POST /api/use", s.use)
 	mux.HandleFunc("POST /api/source/add", s.sourceAdd)
 	mux.HandleFunc("POST /api/source/edit", s.sourceEdit)
@@ -61,6 +62,8 @@ func (s *Server) Handler() http.Handler {
 }
 
 // guard 防 DNS 重绑定：只接受 Host 为 127.0.0.1/localhost 的请求。
+// 带 Origin 头的请求（浏览器跨源请求、同源 POST 都会带）还要求 Origin 正好是 http://<Host>，挡住别的网页发来的请求。
+// 没有 Origin 的请求（命令行工具、同源 GET）照常处理；所有 /api/ 请求另外都要 X-ACSW-Token。
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.Host
@@ -71,10 +74,40 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			http.Error(w, "只允许本机访问", http.StatusForbidden)
 			return
 		}
+		if o := r.Header.Get("Origin"); o != "" && o != "http://"+r.Host {
+			http.Error(w, "跨源请求被拒绝", http.StatusForbidden)
+			return
+		}
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Cache-Control", "no-store")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// needToken 要求 GET 接口也带 X-ACSW-Token（页面里嵌着 token，别的进程/网页拿不到）。
+func (s *Server) needToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.tokenOK(r) {
+			writeJSON(w, 403, map[string]string{"error": "token 不对，请刷新页面"})
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) tokenOK(r *http.Request) bool {
+	return s.Token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-ACSW-Token")), []byte(s.Token)) == 1
+}
+
+// HTTPServer 返回带超时设置的 http.Server。最慢的接口是查模型（上游 ModelsTimeout），写超时留出余量；没有长轮询接口。
+func (s *Server) HTTPServer() *http.Server {
+	return &http.Server{
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      core.ModelsTimeout + 15*time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
@@ -90,8 +123,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 // readPost 统一校验 POST：token、JSON 类型、请求体大小，再解码。失败时已写好响应，返回 false。
 func (s *Server) readPost(w http.ResponseWriter, r *http.Request, limit int64, v any) bool {
-	tok := r.Header.Get("X-ACSW-Token")
-	if subtle.ConstantTimeCompare([]byte(tok), []byte(s.Token)) != 1 || s.Token == "" {
+	if !s.tokenOK(r) {
 		writeJSON(w, 403, map[string]string{"error": "token 不对，请刷新页面"})
 		return false
 	}
