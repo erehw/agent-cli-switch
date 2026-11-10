@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,7 +30,21 @@ import (
 	"acsw/internal/web"
 )
 
-var version = "0.1.0"
+// version 在编译时注入：go build -ldflags "-X main.version=$(git describe --tags --always --dirty)"（见 build.ps1）。
+// 没注入时为 "dev"，这时改用 Go 记录的模块版本（go install …@v0.1.1、或在打了 tag 的提交上编译时有）。
+var version = "dev"
+
+// versionString 返回显示用的版本号，统一去掉开头的 v（v0.1.1 → 0.1.1）。
+func versionString() string {
+	v := version
+	if v == "dev" || v == "" {
+		v = "dev"
+		if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+			v = bi.Main.Version
+		}
+	}
+	return strings.TrimPrefix(v, "v")
+}
 
 const usage = `acsw %s — agent cli switch（别名 code switch）
 
@@ -70,13 +85,13 @@ func realMain(args []string) int {
 		return fail(err)
 	}
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
-		fmt.Printf(usage, version, app.Paths.Root)
+		fmt.Printf(usage, versionString(), app.Paths.Root)
 		return 0
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "version", "--version":
-		fmt.Println("acsw", version)
+		fmt.Println("acsw", versionString())
 		return 0
 	case "source":
 		return cmdSource(app, rest)

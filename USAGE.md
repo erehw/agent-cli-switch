@@ -66,7 +66,7 @@ acsw home cmd home3                                        # 生成给外部程�
 
 - 导入 Plus/Pro 后，不要再用旧方式启动同一个登录，否则两边刷新 token 会互相挤掉。
 - key 只在凭据管理器里（目标名 `acsw/codex/<source>`），不写进文件。
-- 改代码后重新 `go build -trimpath -o dist/acsw.exe ./cmd/acsw`，再复制到 PATH 目录；若用 `acsw home cmd` 生成过脚本，用新 exe 再生成一次，脚本里的路径才会更新。
+- 改代码后运行 `.\build.ps1`（会编译出 `dist\acsw.exe` 并注入版本号），再把它复制到 PATH 目录；若用 `acsw home cmd` 生成过脚本，用新 exe 再生成一次，脚本里的路径才会更新。
 
 ## home1 = 官方 .codex
 

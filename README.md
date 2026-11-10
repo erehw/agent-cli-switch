@@ -9,8 +9,11 @@
 - 直接用：把 `dist/acsw.exe` 放到 PATH 里的目录。
 - 自己编译（需要 Go 1.26 或更新版本，不需要 C 编译器）：
   ```
-  go build -trimpath -o dist/acsw.exe ./cmd/acsw
+  .\build.ps1                     # 输出 dist\acsw.exe，版本号取自 git describe
+  .\build.ps1 -Out D:\bin\acsw.exe
   ```
+  build.ps1 实际执行的是 `go build -trimpath -ldflags "-X main.version=<git describe --tags --always --dirty>" -o dist/acsw.exe ./cmd/acsw`。
+  代码里不写死版本号：没有注入时显示 Go 记录的模块版本，如果也没有就显示 `dev`。`acsw version` 输出 `acsw <版本>`，开头的 v 统一去掉，例如 `acsw 0.1.1`、`acsw 0.1.1-2-gabc1234-dirty`。
 - 根目录默认是 `%USERPROFILE%\agent-source\codex`，可以用环境变量 `ACSW_ROOT` 改。测试时建议先设独立测试根目录，不碰正式目录。
 - codex 路径：默认用 PATH 里的 `codex`（npm 装的 `codex.cmd` 也可以），也可以用 `ACSW_CODEX` 指定完整路径。
 
@@ -219,7 +222,7 @@ internal/web        acsw ui
 
 ```
 go vet ./... && go test ./...
-go build -trimpath -o dist/acsw.exe ./cmd/acsw
+.\build.ps1
 ```
 
 单测：凭据用内存或文件实现，进程检查用假实现，codex 用假的 shell 脚本代替（类 Unix），状态库用 modernc sqlite 造的假库。
