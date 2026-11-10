@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"acsw/internal/codexdb"
 	"acsw/internal/config"
 	"acsw/internal/exitcode"
 	"acsw/internal/proc"
@@ -64,6 +65,31 @@ func (a *App) UnmapProject(dir string) (UnmapResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// RecentInHome 列出某个 home 里最近的会话（不按项目目录过滤），给网页用。别名 home 只读官方目录（复制到临时目录再读）。
+func (a *App) RecentInHome(homeName string, limit int) (LastResult, error) {
+	if err := config.ValidName("home", homeName); err != nil {
+		return LastResult{}, exitcode.WithF(exitcode.HomeNotFound, err, exitcode.F{"home": homeName})
+	}
+	m, err := config.LoadMap(a.Paths)
+	if err != nil {
+		return LastResult{}, err
+	}
+	e, inMap := m.Homes[homeName]
+	if !inMap && !config.Exists(a.Paths.HomeDir(homeName)) {
+		return LastResult{}, exitcode.WithF(exitcode.HomeNotFound, fmt.Errorf("home %s 不存在", homeName), exitcode.F{"home": homeName})
+	}
+	all := func(string, string) bool { return true }
+	dir := a.Paths.CodexHome(homeName, e)
+	var ts []codexdb.Thread
+	var note string
+	if e.AliasOf != "" {
+		ts, note, err = codexdb.RecentReadOnly(dir, "", limit, all)
+	} else {
+		ts, note, err = codexdb.Recent(dir, "", limit, all)
+	}
+	return LastResult{Home: homeName, Threads: ts, Note: note}, err
 }
 
 // RemoveHomeResult 是 RemoveHome 的结果。

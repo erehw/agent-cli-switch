@@ -34,9 +34,10 @@ func NewToken() string {
 
 // Server 是网页处理器。
 type Server struct {
-	App   *core.App
-	Token string
-	Port  int
+	App     *core.App
+	Token   string
+	Port    int
+	AcswExe string // 生成 acsw-codex.cmd 时写进去的 acsw.exe 完整路径
 }
 
 type sourceView struct {
@@ -58,6 +59,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/source/edit", s.sourceEdit)
 	mux.HandleFunc("POST /api/source/delete", s.sourceDelete)
 	mux.HandleFunc("POST /api/source/models", s.sourceModels)
+	mux.HandleFunc("POST /api/home/add", s.homeAdd)
+	mux.HandleFunc("POST /api/home/alias", s.homeAlias)
+	mux.HandleFunc("POST /api/home/cmd", s.homeCmd)
+	mux.HandleFunc("POST /api/home/rm", s.homeRm)
+	mux.HandleFunc("POST /api/map", s.mapProject)
+	mux.HandleFunc("POST /api/unmap", s.unmapProject)
+	mux.HandleFunc("GET /api/doctor", s.needToken(s.doctor))
+	mux.HandleFunc("GET /api/last", s.needToken(s.last))
 	return s.guard(mux)
 }
 
@@ -179,7 +188,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	if sv == nil {
 		sv = []sourceView{}
 	}
-	writeJSON(w, 200, map[string]any{"homes": hv, "sources": sv})
+	writeJSON(w, 200, map[string]any{"env": s.App.Env(), "homes": hv, "sources": sv})
 }
 
 func (s *Server) use(w http.ResponseWriter, r *http.Request) {

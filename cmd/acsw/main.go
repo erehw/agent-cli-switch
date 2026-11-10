@@ -538,6 +538,12 @@ func readKey(fromStdin bool) (string, error) {
 
 func serveUI(app *core.App, port int, open bool) int {
 	s := &web.Server{App: app, Token: web.NewToken(), Port: port}
+	if exe, err := os.Executable(); err == nil {
+		if p, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = p
+		}
+		s.AcswExe = exe
+	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return fail(fmt.Errorf("端口 %d 打不开：%w（换一个：--port 7800）", port, err))

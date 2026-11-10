@@ -14,14 +14,24 @@ fieldset{margin:8px 0 20px}
 .launch{margin:2px 0 6px}.launch code{background:#f3f3f3;padding:1px 4px;font-size:12px;user-select:all}
 fieldset label{display:block;margin:4px 0}
 fieldset input[type=text],fieldset input[type=password]{width:420px}
+#env{background:#f7f7f7;padding:6px 10px;margin:6px 0 12px}
+.ops button{margin:1px 2px}
+td.dir{font-size:12px;word-break:break-all}
 </style>
 </head>
 <body>
 <h2>acsw · agent cli switch</h2>
+<div id="env" class="mut">读取中…</div>
 <p>切换前请先退出该 home 里所有 codex。<label><input type="checkbox" id="dry"> 只预演（不改文件）</label>
- <button onclick="load()">刷新</button></p>
+ <button onclick="load()">刷新</button> <button onclick="doctor()">体检（doctor）</button></p>
 <h3>Home</h3>
-<table id="homes"><thead><tr><th>home</th><th>当前 source</th><th>provider</th><th>运行中</th><th>项目目录</th><th>切换到</th></tr></thead><tbody></tbody></table>
+<table id="homes"><thead><tr><th>home</th><th>当前 source</th><th>provider</th><th>运行中</th><th>CODEX_HOME 目录</th><th>项目目录</th><th>切换到</th><th>操作</th></tr></thead><tbody></tbody></table>
+<fieldset>
+<legend>Home 管理</legend>
+<label>新增 home <input type="text" id="h_name" autocomplete="off" placeholder="例如 home3"> <button onclick="homeAdd()">新增</button></label>
+<label>映射项目目录 <select id="m_home"></select> <input type="text" id="m_dir" autocomplete="off" placeholder="完整路径，例如 D:\work\proj"> <button onclick="mapDir()">映射</button></label>
+<div class="mut">删除 home：要求没有项目映射、没有 codex 在跑；目录（含 codex 会话）移到备份区 .acsw-backup。彻底删除只能在命令行用 acsw home rm &lt;名称&gt; --purge --yes。官方别名 home 删除时不会动官方目录。</div>
+</fieldset>
 <div class="mut">「复制」只复制启动命令（进入项目目录后运行 acsw codex --expect-home &lt;该目录映射的 home&gt;），粘贴到终端运行；页面不会启动 codex。命令格式：<label><input type="radio" name="shell" value="cmd" onchange="setShell(this.value)"> cmd</label> <label><input type="radio" name="shell" value="ps" onchange="setShell(this.value)"> PowerShell</label></div>
 <h3>Source</h3>
 <table id="sources"><thead><tr><th>source</th><th>类型</th><th>base_url / model</th><th>登录或 key</th><th>被哪些 home 使用</th><th>操作</th></tr></thead><tbody></tbody></table>
@@ -44,6 +54,11 @@ let shell = (()=>{ try{ return localStorage.getItem("acsw.shell")==="ps" ? "ps" 
 function setShell(v){ shell = v==="ps" ? "ps" : "cmd"; try{ localStorage.setItem("acsw.shell", shell); }catch(e){} load(); }
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function $(id){return document.getElementById(id)}
+async function get(url){
+  const r = await fetch(url,{headers:{"X-ACSW-Token":TOKEN}});
+  let d = {}; try{ d = await r.json(); }catch(e){ d = {error:"响应不是 JSON（"+r.status+"）"}; }
+  return [r, d];
+}
 async function post(url, body){
   const r = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","X-ACSW-Token":TOKEN},body:JSON.stringify(body)});
   let d = {}; try{ d = await r.json(); }catch(e){ d = {error:"响应不是 JSON（"+r.status+"）"}; }
@@ -51,16 +66,25 @@ async function post(url, body){
 }
 function show(text, ok){ const o=$("out"); o.textContent=text; o.className=ok?"ok":"err"; }
 async function load(){
-  const r = await fetch("/api/status",{headers:{"X-ACSW-Token":TOKEN}}); const d = await r.json();
+  const [r, d] = await get("/api/status");
   if(!r.ok){show(d.error,false); return;}
   sources = d.sources;
+  showEnv(d.env);
+  $("m_home").innerHTML = d.homes.map(h=>`<option value="${esc(h.home)}">${esc(h.home)}</option>`).join("");
   const hb = document.querySelector("#homes tbody"); hb.innerHTML = "";
   for(const h of d.homes){
     const opts = sources.map(s=>`<option value="${esc(s.name)}"${s.name===h.source?" selected":""}>${esc(s.name)} (${esc(s.type)})</option>`).join("");
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${esc(h.home)}${h.problem?`<div class="err">${esc(h.problem)}</div>`:""}</td><td>${h.alias_of?`官方别名<div class="mut">${esc(h.alias_of)}（只读）</div>`:esc(h.source||"（未设置）")}</td><td>${esc(h.provider)}</td><td>${h.running}</td><td class="proj">${(h.launches||[]).map((l,i)=>`<div class="launch"><div>${esc(l.dir)}</div>${l[shell]?`<button class="cp" data-i="${i}" title="${esc(l[shell])}">复制</button> <code>${esc(l[shell])}</code> <span class="cpok ok"></span>`:""}${l.warn?`<div class="warn">${esc(l.warn)}</div>`:""}</div>`).join("")}</td>
-      <td>${h.alias_of?`<span class="mut">官方目录别名，不能切换 source</span>`:`<select>${opts}</select> <button class="sw">切换</button>`}</td>`;
+    tr.innerHTML = `<td>${esc(h.home)}${h.problem?`<div class="err">${esc(h.problem)}</div>`:""}</td><td>${h.alias_of?`官方别名<div class="mut">${esc(h.alias_of)}（只读）</div>`:esc(h.source||"（未设置）")}</td><td>${esc(h.provider)}</td><td>${h.running}</td><td class="dir">${esc(h.dir)}</td><td class="proj">${(h.launches||[]).map((l,i)=>`<div class="launch"><div>${esc(l.dir)} <button class="um" data-i="${i}">取消映射</button></div>${l[shell]?`<button class="cp" data-i="${i}" title="${esc(l[shell])}">复制</button> <code>${esc(l[shell])}</code> <span class="cpok ok"></span>`:""}${l.warn?`<div class="warn">${esc(l.warn)}</div>`:""}</div>`).join("")}</td>
+      <td>${h.alias_of?`<span class="mut">官方目录别名，不能切换 source</span>`:`<select>${opts}</select> <button class="sw">切换</button>`}</td>
+      <td class="ops"><button class="rc">最近会话</button> <button class="hc">生成 .cmd</button> ${h.alias_of?`<button class="ao">取消别名</button>`:(h.source?"":`<button class="as">设为官方别名</button>`)} <button class="rm">删除</button></td>`;
     if(!h.alias_of) tr.querySelector("button.sw").onclick = ()=>use(h.home, tr.querySelector("select").value);
+    tr.querySelectorAll("button.um").forEach(b=>{ b.onclick = ()=>unmapDir(h.launches[+b.dataset.i].dir); });
+    tr.querySelector("button.rc").onclick = ()=>recent(h.home);
+    tr.querySelector("button.hc").onclick = ()=>homeCmd(h.home);
+    tr.querySelector("button.rm").onclick = ()=>homeRm(h);
+    if(tr.querySelector("button.as")) tr.querySelector("button.as").onclick = ()=>aliasSet(h.home);
+    if(tr.querySelector("button.ao")) tr.querySelector("button.ao").onclick = ()=>aliasOff(h.home);
     tr.querySelectorAll("button.cp").forEach(b=>{ b.onclick = ()=>copyCmd(h.launches[+b.dataset.i][shell], b.parentNode.querySelector(".cpok")); });
     hb.appendChild(tr);
   }
@@ -169,6 +193,76 @@ async function use(home, source){
   if(d.backup_dir) t+="  备份目录："+d.backup_dir+"\n";
   show(t, r.ok);
   load();
+}
+function showEnv(e){
+  if(!e){ return; }
+  const from = e.root_from==="env" ? "来自环境变量 ACSW_ROOT" : "默认位置";
+  const cx = e.codex && e.codex.found ? `codex：${esc(e.codex.path)}（来自 ${esc(e.codex.from)}）` : `<span class="err">codex：${esc((e.codex&&e.codex.error)||"找不到")}</span>`;
+  $("env").innerHTML = `数据根目录：<b>${esc(e.root)}</b>（${from}） · acsw ${esc(e.acsw_version||"?")} · ${cx}`;
+}
+function errText(d){ return "失败："+(d.error||"未知错误")+(d.kind?`（${d.kind}）`:""); }
+async function homeAdd(){
+  const name = $("h_name").value.trim(); if(!name){ show("请填 home 名称",false); return; }
+  const [r,d] = await post("/api/home/add",{home:name});
+  if(!r.ok){ show(errText(d),false); return; }
+  $("h_name").value = ""; show(`已新增 home ${d.home}：${d.dir}\n下一步：在表格里给它选 source 并“切换”，或设为官方别名`, true); load();
+}
+async function mapDir(){
+  const home = $("m_home").value, dir = $("m_dir").value.trim();
+  if(!home || !dir){ show("请选 home 并填项目目录完整路径",false); return; }
+  const [r,d] = await post("/api/map",{home,dir});
+  if(!r.ok){ show(errText(d),false); return; }
+  $("m_dir").value = ""; show(`已映射：${d.dir} → ${d.home}`, true); load();
+}
+async function unmapDir(dir){
+  if(!confirm(`取消映射 ${dir}？\n在跑的 codex 不受影响；之后在这个目录运行 acsw codex 会提示未映射。`)) return;
+  const [r,d] = await post("/api/unmap",{dir});
+  if(!r.ok){ show(errText(d),false); return; }
+  const x = d.result; show(`已取消映射：${x.dir}（原来 → ${x.home}）`+(x.running?`\n注意：这个目录下还有 ${x.running} 个 codex 在跑，它们不受影响`:""), true); load();
+}
+async function homeCmd(home){
+  const [r,d] = await post("/api/home/cmd",{home});
+  if(!r.ok){ show(errText(d),false); return; }
+  show((d.overwritten?"已覆盖：":"已生成：")+d.path, true);
+}
+async function aliasSet(home){
+  const dir = prompt(`把 ${home} 设为官方 CODEX_HOME 的只读别名。\n官方目录（留空 = %USERPROFILE%\\.codex）：`, "");
+  if(dir===null) return;
+  const [r,d] = await post("/api/home/alias",{home,dir:dir.trim()});
+  if(!r.ok){ show(errText(d),false); return; }
+  show(`已设置：${home} = 官方目录 ${d.alias_of} 的只读别名（只改了 map.toml，没有碰官方目录）`, true); load();
+}
+async function aliasOff(home){
+  if(!confirm(`取消 ${home} 的官方别名？（只改 map.toml）`)) return;
+  const [r,d] = await post("/api/home/alias",{home,off:true});
+  if(!r.ok){ show(errText(d),false); return; }
+  show(`已取消 ${home} 的官方别名`, true); load();
+}
+async function homeRm(h){
+  if((h.projects||[]).length){ show(`home ${h.home} 还有项目目录映射到它，先取消映射：\n  `+h.projects.join("\n  "), false); return; }
+  const what = h.alias_of ? `只删 acsw 自己的 home 目录和 map 记录，官方目录 ${h.alias_of} 不会动。` : `目录 ${h.dir}（含 codex 会话）会移到备份区 .acsw-backup，可以找回。`;
+  if(!confirm(`删除 home ${h.home}？\n${what}`)) return;
+  const [r,d] = await post("/api/home/rm",{home:h.home});
+  if(!r.ok){ show(errText(d),false); load(); return; }
+  const x = d.result; show(`已删除 home ${x.home}`+(x.backup_dir?`\n  目录移到：${x.backup_dir}`:"")+(x.alias_of?`\n  官方目录 ${x.alias_of} 没有改动`:""), true); load();
+}
+async function recent(home){
+  const [r,d] = await get("/api/last?n=8&home="+encodeURIComponent(home));
+  if(!r.ok){ show(errText(d),false); return; }
+  let t = `home ${d.home} 最近的会话：\n`;
+  if(d.note) t += `（${d.note}）\n`;
+  if(!d.threads.length) t += "  没有找到\n";
+  for(const x of d.threads) t += `  ${x.id}  ${x.updated? new Date(x.updated).toLocaleString() : "-"}  ${x.title}\n      ${x.cwd}\n`;
+  if(d.threads.length) t += `接续：在对应项目目录运行 acsw codex resume ${d.threads[0].id}`;
+  show(t, true);
+}
+async function doctor(){
+  const [r,d] = await get("/api/doctor");
+  if(!r.ok){ show(errText(d),false); return; }
+  const mark = {ok:"[ok]   ", warn:"[warn] ", error:"[error]"};
+  let t = d.checks.map(c=>`${mark[c.level]||c.level} ${c.name}：${c.msg}`).join("\n");
+  t += "\n结论：" + (d.ok ? "没有发现错误" : "有错误，见 [error]");
+  show(t, d.ok);
 }
 document.querySelectorAll('input[name=shell]').forEach(r=>{ r.checked = r.value===shell; });
 load();

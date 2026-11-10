@@ -48,6 +48,24 @@ func TestUnmapProject(t *testing.T) {
 	}
 }
 
+func TestRecentInHome(t *testing.T) {
+	a, official, _ := aliasFixture(t)
+	before := snapshot(t, official)
+	_, err := a.SetHomeAlias("home1", official)
+	tu.Must(t, err)
+	r, err := a.RecentInHome("home1", 10)
+	tu.Must(t, err)
+	if len(r.Threads) != 3 || r.Threads[0].From != "db" {
+		t.Fatalf("%+v", r)
+	}
+	if after := snapshot(t, official); after != before {
+		t.Fatal("官方目录被改动了")
+	}
+	if _, err := a.RecentInHome("nope", 5); err == nil {
+		t.Fatal("不存在的 home")
+	}
+}
+
 func TestRemoveHome(t *testing.T) {
 	a, official, prj := aliasFixture(t)
 	before := snapshot(t, official)
