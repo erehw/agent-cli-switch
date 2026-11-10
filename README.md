@@ -83,6 +83,7 @@ acsw source edit gw1 [--model <m>] [--opus ""] [--key-mode plain] [--env NAME=va
 acsw claude gw1 [--key-mode helper|plain] [--strict] [--] [claude args...]
 acsw claude export gw1 [--key-mode helper|plain]
 acsw claude key gw1                       # 给 apiKeyHelper 用 / for apiKeyHelper only
+acsw claude cmd gw1 [--dir <目录>] [--name <文件名>] [--key-mode helper|plain] [--force]   # 生成 claude-gw1.cmd / generate a launcher script
 ```
 
 ### 两种启动方式 / Two ways to launch
@@ -307,7 +308,8 @@ English:
 - 启动前检查用户级 `settings.json` 和当前目录的 `.claude\settings.json`、`.claude\settings.local.json`：有 acsw 盖不住的 `ANTHROPIC_*` 变量（plain 模式下还有 `apiKeyHelper`）时在 stderr 提醒（只写变量名）；加 `--strict` 时拒绝启动（`settings_conflict`）。
 - apiKeyHelper 的路径必须带引号（实测不带引号会静默失败、发出空认证），acsw 总是加引号；路径含 `%`、`^`、`"`、`!` 时拒绝生成。helper 模式下文件里 `ANTHROPIC_AUTH_TOKEN` 写空串，否则用户级的 token 也会被发出去。
 - `acsw claude key <source>` 把 key 打到 stdout，只给 apiKeyHelper 用。
-- source 名不能叫 `export` 或 `key`。附加变量（`--env`）名字含 `KEY`、`TOKEN`、`SECRET` 的拒绝，也不能改 acsw 管理的变量。
+- `acsw claude cmd <source>` 生成启动脚本 `claude-<source>.cmd`（和 codex 的 `acsw home cmd` 对应）。内容：`@echo off`、一行标记 `rem acsw-generated ...`、`"<acsw.exe 完整路径>" claude <source> %*`（加 `--key-mode` 时写在 `%*` 前面）、`exit /b %ERRORLEVEL%`。参数通过 `%*` 原样转交（引号里的空格、`&` 等保持不变），stdin 继承，claude 的退出码（或 acsw 的 9999xxxx）原样传回；路径里的 `%` 会写成 `%%`；文件里没有 key。默认目录是 acsw.exe 所在目录，`--dir` 改目录，`--name` 改文件名（不写扩展名时补 `.cmd`）。同名文件有标记行（acsw 生成的）就直接覆盖并提示“已覆盖”；没有标记行就拒绝（99994012 `confirm_required`），加 `--force` 才覆盖。网页 Claude Code 页签每个 source 有「生成 .cmd」按钮（可填目录，留空用默认；要覆盖别人的文件时先确认）。source 不能叫 `cmd`。
+- source 名不能叫 `export`、`key` 或 `cmd`。附加变量（`--env`）名字含 `KEY`、`TOKEN`、`SECRET` 的拒绝，也不能改 acsw 管理的变量。
 - `acsw source models <claude source>` 请求 `<base_url>/v1/models`，同时带 `x-api-key`、`Authorization: Bearer` 和 `anthropic-version`。
 - 已在 claude 2.1.319 上用本地假服务实测（见 `cmd/acsw/claude_e2e_test.go`）：三种用法都只把对应 source 的 key 发到对应地址；helper 模式下 key 同时出现在 `x-api-key` 和 `Authorization`，plain 模式只在 `Authorization`；用户级 settings 里的 token 不会漏出去。
 
@@ -326,7 +328,8 @@ Three ways, all built on `claude --settings <file>`. Every generated file sets t
 - Before launching, the user `settings.json` and the current directory's `.claude\settings.json` / `.claude\settings.local.json` are checked: `ANTHROPIC_*` variables acsw does not cover (and, in plain mode, `apiKeyHelper`) produce a stderr warning with the names only; with `--strict` the launch is refused (`settings_conflict`).
 - The apiKeyHelper path must be quoted (unquoted, claude silently fails and sends empty auth), so acsw always quotes it and refuses paths containing `%`, `^`, `"` or `!`. In helper mode `ANTHROPIC_AUTH_TOKEN` is written as an empty string; otherwise the user-level token would be sent too.
 - `acsw claude key <source>` prints the key to stdout; it is meant for apiKeyHelper only.
-- Source names `export` and `key` are reserved. Extra variables (`--env`) whose names contain `KEY`, `TOKEN` or `SECRET` are refused, as are acsw-managed names.
+- `acsw claude cmd <source>` writes a launcher `claude-<source>.cmd` (the claude counterpart of `acsw home cmd`). Content: `@echo off`, a marker line `rem acsw-generated ...`, `"<full path of acsw.exe>" claude <source> %*` (with `--key-mode`, it goes before `%*`), and `exit /b %ERRORLEVEL%`. Arguments pass through `%*` unchanged (spaces, `&` etc. inside quotes survive), stdin is inherited, and claude's exit code (or acsw's 9999xxxx) is returned; a `%` in the path is written as `%%`; the file contains no key. The default directory is the one holding acsw.exe; `--dir` changes it and `--name` the file name (`.cmd` is appended when there is no extension). An existing file with the marker line (acsw-generated) is overwritten with an "overwritten" notice; without the marker it is refused (99994012 `confirm_required`) unless `--force` is given. In the web UI's Claude Code tab each source has a "生成 .cmd" button (optional directory, blank = default; overwriting a foreign file asks first). Sources cannot be named `cmd`.
+- Source names `export`, `key` and `cmd` are reserved. Extra variables (`--env`) whose names contain `KEY`, `TOKEN` or `SECRET` are refused, as are acsw-managed names.
 - `acsw source models <claude source>` calls `<base_url>/v1/models` with `x-api-key`, `Authorization: Bearer` and `anthropic-version`.
 - Verified on claude 2.1.319 against local fake servers (see `cmd/acsw/claude_e2e_test.go`): all three ways send only the source's key to the source's address; in helper mode the key is in both `x-api-key` and `Authorization`, in plain mode only in `Authorization`; the token from the user settings never leaks.
 

@@ -98,7 +98,7 @@ func editClaude(app *core.App, args []string) int {
 	return 0
 }
 
-const claudeUsage = "用法：acsw claude <source> [--key-mode helper|plain] [--strict] [--] [claude 参数...]；acsw claude export <source> [--key-mode helper|plain]；acsw claude key <source>"
+const claudeUsage = "用法：acsw claude <source> [--key-mode helper|plain] [--strict] [--] [claude 参数...]；acsw claude export <source> [--key-mode helper|plain]；acsw claude cmd <source> [--dir <目录>] [--name <文件名>] [--key-mode helper|plain] [--force]；acsw claude key <source>"
 
 // parseClaudeArgs 解析 acsw claude <source> 后面的参数：开头的 --key-mode/--strict 归 acsw，
 // 遇到 "--" 或第一个别的参数起全部原样交给 claude。
@@ -146,6 +146,29 @@ func cmdClaude(app *core.App, rest []string) int {
 			fmt.Fprintf(os.Stderr, "acsw 注意：%s 里有明文 key，不要提交、不要发给别人；用完可以删掉\n", path)
 		}
 		fmt.Println(path)
+		return 0
+	case "cmd":
+		f, pos, _, err := parseArgs(rest[1:], set("dir", "name", "key-mode"), set("force"))
+		if err != nil || len(pos) != 1 {
+			return fail(core.Usage("用法：acsw claude cmd <source> [--dir <目录，默认 acsw.exe 所在目录>] [--name <文件名，默认 claude-<source>.cmd>] [--key-mode helper|plain] [--force]"))
+		}
+		exe := selfExe()
+		if exe == "" {
+			return fail(errors.New("找不到本程序路径"))
+		}
+		r, err := app.WriteClaudeCmd(pos[0], exe, f["dir"], f["name"], f["key-mode"], f["force"] != "")
+		if err != nil {
+			return fail(err)
+		}
+		switch {
+		case r.Forced:
+			fmt.Printf("已覆盖（--force，原文件不是 acsw 生成的）：%s\n", r.Path)
+		case r.Overwritten:
+			fmt.Printf("已覆盖：%s\n", r.Path)
+		default:
+			fmt.Printf("已生成：%s\n", r.Path)
+		}
+		fmt.Printf("运行它等同于 acsw claude %s [参数...]，退出码原样传回\n", r.Source)
 		return 0
 	case "key":
 		_, pos, _, err := parseArgs(rest[1:], nil, nil)

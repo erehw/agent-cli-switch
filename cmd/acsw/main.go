@@ -62,6 +62,8 @@ const usage = `acsw %s — agent cli switch（别名 code switch）
   acsw claude <source> [--key-mode helper|plain] [--strict] [--] [claude 参数...]   # 用 claude source 启动 claude
   acsw claude export <source> [--key-mode helper|plain]   # 生成 settings 文件，给 claude --settings <文件> 用
   acsw claude key <source>                     # 输出 key（给 apiKeyHelper 用，别的场合不要用）
+  acsw claude cmd <source> [--dir <目录>] [--name <文件名>] [--key-mode helper|plain] [--force]
+                                               # 生成 claude-<source>.cmd（默认放在 acsw.exe 所在目录）；不是 acsw 生成的同名文件要 --force 才覆盖
   acsw home add <名称>
   acsw home rm <名称> [--purge] --yes         # 要求没有项目映射、没有 codex 在跑；默认目录移到备份区，--purge 彻底删除
   acsw home cmd <home>                         # 生成 home\<home>\acsw-codex.cmd（给别的程序调用）

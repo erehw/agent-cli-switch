@@ -269,10 +269,11 @@ function renderClaude(c){
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${esc(s.name)}</td><td>${esc(s.base_url)}</td><td>${ms}</td><td>${s.has_key?"有":'<span class="err">缺</span>'}<div class="mut">${esc(s.key_mode)}</div></td><td class="dir">${file}${plain}</td>
       <td><button class="cp">复制</button> <code>${esc(s.launch)}</code> <span class="cpok ok"></span></td>
-      <td class="ops"><button class="m">查模型</button> <button class="e">编辑</button> <button class="xh">导出 helper</button> <button class="xp">导出明文</button> <button class="d">删除</button></td>`;
+      <td class="ops"><button class="m">查模型</button> <button class="e">编辑</button> <button class="cc">生成 .cmd</button> <button class="xh">导出 helper</button> <button class="xp">导出明文</button> <button class="d">删除</button></td>`;
     tr.querySelector(".cp").onclick = ()=>copyCmd(s.launch, tr.querySelector(".cpok"));
     tr.querySelector(".m").onclick = ()=>models(s);
     tr.querySelector(".e").onclick = ()=>cstartEdit(s);
+    tr.querySelector(".cc").onclick = ()=>ccmd(s);
     tr.querySelector(".xh").onclick = ()=>cexport(s, "helper");
     tr.querySelector(".xp").onclick = ()=>cexport(s, "plain");
     tr.querySelector(".d").onclick = ()=>cdel(s);
@@ -337,6 +338,19 @@ async function csave(){
     show(`已新增 claude source ${d.name}\n  `+(d.notes||[]).join("\n  ")+`\n  启动：${d.launch}`, true);
   }
   cresetForm(); load();
+}
+// 生成 claude-<source>.cmd：默认放在 acsw.exe 所在目录；同名文件不是 acsw 生成的要确认才覆盖。
+async function ccmd(s){
+  const dir = prompt(`生成 claude-${s.name}.cmd，放到哪个目录？\n（留空 = acsw.exe 所在目录，通常在 PATH 里）`, "");
+  if(dir===null) return;
+  let [r,d] = await post("/api/claude/cmd", {name:s.name, dir:dir.trim()});
+  if(!r.ok && d.kind==="confirm_required"){
+    if(!confirm(d.error+"\n\n仍然覆盖这个文件？")){ show("已取消，什么都没改", true); return; }
+    [r,d] = await post("/api/claude/cmd", {name:s.name, dir:dir.trim(), force:true});
+  }
+  if(!r.ok){ show("生成失败："+errText(d),false); return; }
+  const x = d.result;
+  show(`${x.overwritten?"已覆盖":"已生成"}：${x.path}\n运行它等同于 acsw claude ${x.source} [参数...]，退出码原样传回`, true);
 }
 async function cexport(s, mode){
   if(mode==="plain" && !confirm(`导出 ${s.name} 的明文 settings 文件？\nkey 会以明文写进 ${"<settings 目录>\\"+s.name+".plain.json"}，不要提交、不要发给别人。`)) return;

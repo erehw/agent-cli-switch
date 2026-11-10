@@ -13,8 +13,8 @@ import (
 	"acsw/internal/cred"
 )
 
-// ReservedClaudeNames 是 claude source 不能用的名字（会和 acsw claude export/key 子命令撞车）。
-var ReservedClaudeNames = []string{"export", "key"}
+// ReservedClaudeNames 是 claude source 不能用的名字（会和 acsw claude export/key/cmd 子命令撞车）。
+var ReservedClaudeNames = []string{"export", "key", "cmd"}
 
 // ClaudeFields 是 claude source 除 key 以外的设置。
 type ClaudeFields struct {

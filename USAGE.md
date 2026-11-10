@@ -105,6 +105,8 @@ acsw claude gw1 -p "hi"              # 参数原样交给 claude / arguments go 
 acsw claude gw1 --key-mode plain     # 用明文 settings 文件启动 / launch with the plaintext file
 acsw claude export gw1               # 生成 helper 文件，给 claude --settings 用 / helper file for claude --settings
 acsw claude export gw1 --key-mode plain   # 生成明文文件（有提醒）/ plaintext file (with a warning)
+acsw claude cmd gw1                  # 生成 claude-gw1.cmd（放在 acsw.exe 旁边）/ launcher next to acsw.exe
+acsw claude cmd gw1 --dir D:\tools --name cgw   # 指定目录和文件名 / explicit directory and name
 acsw source edit gw1 --model <m> | --set-key
 acsw source models gw1               # GET <base_url>/v1/models
 acsw source rm gw1 --yes             # 删 key、删生成的文件 / deletes the key and the generated files
@@ -112,14 +114,16 @@ acsw source rm gw1 --yes             # 删 key、删生成的文件 / deletes th
 
 - 生成的文件在 `%USERPROFILE%\agent-source\claude\settings\`（`<source>.json` 是 helper 文件，`<source>.plain.json` 是明文文件）。直接用：`claude --settings "<文件>"`。
 - acsw 不改 `~\.claude`，不设 `CLAUDE_CONFIG_DIR`，会话还在原来的地方。用户级 settings 里有 acsw 盖不住的 `ANTHROPIC_*` 变量时会提醒，`--strict` 时拒绝启动。
-- 不要自己再传 `--settings`。source 不能叫 `export` 或 `key`。claude source 不能给 codex home 用。
+- 不要自己再传 `--settings`。source 不能叫 `export`、`key` 或 `cmd`。claude source 不能给 codex home 用。
+- `acsw claude cmd gw1` 生成 `claude-gw1.cmd`，内容就是 `"<acsw.exe>" claude gw1 %*` 加 `exit /b %ERRORLEVEL%`：参数原样转交，stdin 继承，退出码传回；文件里不含 key。默认放在 acsw.exe 所在目录（通常在 PATH 里，之后直接 `claude-gw1 -p "hi"`）。acsw 生成的同名文件直接覆盖；别人写的文件不覆盖（99994012 `confirm_required`），加 `--force` 才覆盖。网页 Claude Code 页签每个 source 有「生成 .cmd」按钮。
 - 网页（`acsw ui`）分 Codex 和 Claude Code 两个页签；新增/编辑 source 时可点「从上游获取模型」，从列表里选模型填进 model（claude 还有 opus/sonnet/haiku/fable），也可以手填。
 
 English:
 
 - Generated files live in `%USERPROFILE%\agent-source\claude\settings\` (`<source>.json` is the helper file, `<source>.plain.json` the plaintext one). Use them directly with `claude --settings "<file>"`.
 - acsw does not modify `~\.claude` and does not set `CLAUDE_CONFIG_DIR`; sessions stay where they are. `ANTHROPIC_*` variables in user settings that acsw cannot cover produce a warning; `--strict` refuses to launch.
-- Do not pass `--settings` yourself. Sources cannot be named `export` or `key`. A claude source cannot be used by a codex home.
+- Do not pass `--settings` yourself. Sources cannot be named `export`, `key` or `cmd`. A claude source cannot be used by a codex home.
+- `acsw claude cmd gw1` writes `claude-gw1.cmd`, which is just `"<acsw.exe>" claude gw1 %*` plus `exit /b %ERRORLEVEL%`: arguments are passed through, stdin is inherited, the exit code comes back; the file holds no key. By default it goes next to acsw.exe (usually on PATH, so `claude-gw1 -p "hi"` works). An acsw-generated file of the same name is overwritten; a file acsw did not write is left alone (99994012 `confirm_required`) unless you add `--force`. In the web UI's Claude Code tab each source has a "生成 .cmd" (generate .cmd) button.
 - The web UI (`acsw ui`) has a Codex tab and a Claude Code tab; when adding or editing a source, "fetch models from upstream" lets you pick models into model (and opus/sonnet/haiku/fable for claude), or type them freely.
 
 ## 注意 / Notes
