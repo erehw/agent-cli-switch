@@ -3,6 +3,8 @@
 // 沙盒实测（claude 2.1.319）的结论决定了这里的写法：
 //   - --settings 文件里写了的变量会盖过用户级和项目级 settings；没写的变量会从那里漏进来，所以每次都把整套变量写全，不用的写空串。
 //   - apiKeyHelper 模式必须同时写 ANTHROPIC_AUTH_TOKEN=""，否则用户级的 token 也会被发出去。
+//   - claude 2.1.322 读字符串变量时先 trim，空串等于没设置；所以 /model 菜单的名字、说明等变量（ShieldedEnv）写空串，
+//     标签就回落到 source 的模型 id，不会显示用户级 settings 里别的 provider 的名字。
 //   - apiKeyHelper 的命令在 Windows 上要写成 "\"<exe>\" 参数"，路径不加引号时会静默失败、发出空认证。
 package claude
 
@@ -61,15 +63,42 @@ var ManagedEnv = []string{
 	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
 }
 
-// IsManaged 判断变量名是否由 acsw 管理（不分大小写）。
-func IsManaged(name string) bool {
-	for _, n := range ManagedEnv {
+// ShieldedEnv 是和模型选择、/model 菜单显示有关但 acsw 不填值的变量（claude 2.1.322 读这些）。
+// 生成文件里一律写空串：claude 读字符串变量时先 trim，空串当没设置，于是菜单标签回落到 source 的模型 id、
+// 说明回落到默认文字；这样用户级 settings（如 cc-switch 写的 GLM 配置）里的同名变量就漏不进来。
+// 和 ManagedEnv 不同，这些可以用 --env 改成自己的值（例如给菜单起名字）。
+var ShieldedEnv = []string{
+	"ANTHROPIC_DEFAULT_MODEL",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION", "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION", "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION", "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
+	"ANTHROPIC_DEFAULT_FABLE_MODEL_NAME", "ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION", "ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES",
+	"ANTHROPIC_CUSTOM_MODEL_OPTION", "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME", "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION", "ANTHROPIC_CUSTOM_MODEL_OPTION_SUPPORTED_CAPABILITIES",
+	"ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION",
+	"CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL_FORCE", "CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL",
+	"CLAUDE_CODE_AUTO_MODE_MODEL", "CLAUDE_CODE_BG_CLASSIFIER_MODEL",
+	"CLAUDE_CODE_MODEL_CATALOG", "CLAUDE_CODE_MODEL_CATALOG_URL", "CLAUDE_CODE_MODEL_CAPABILITIES",
+}
+
+// AllEnv 是生成文件里一定会出现的全部变量名（ManagedEnv + ShieldedEnv）。
+func AllEnv() []string {
+	return append(append([]string{}, ManagedEnv...), ShieldedEnv...)
+}
+
+func inList(list []string, name string) bool {
+	for _, n := range list {
 		if strings.EqualFold(n, name) {
 			return true
 		}
 	}
 	return false
 }
+
+// IsManaged 判断变量名是否由 acsw 管理、不能用 --env 改（不分大小写）。
+func IsManaged(name string) bool { return inList(ManagedEnv, name) }
+
+// IsShielded 判断变量名是否在 ShieldedEnv 里（默认写空串，可用 --env 改）。
+func IsShielded(name string) bool { return inList(ShieldedEnv, name) }
 
 // Spec 是生成 settings 需要的 source 信息（不含 key）。
 type Spec struct {
@@ -125,11 +154,14 @@ type file struct {
 // Env 生成完整的 env 表。plain 模式下 token 为 key，helper 模式为空串。
 func (s Spec) Env(token string) map[string]string {
 	env := map[string]string{}
-	for k, v := range s.Extra {
-		env[k] = v
-	}
-	for _, n := range ManagedEnv {
+	for _, n := range AllEnv() {
 		env[n] = ""
+	}
+	for k, v := range s.Extra {
+		if IsShielded(k) {
+			k = canonical(k)
+		}
+		env[k] = v
 	}
 	env[EnvBaseURL] = s.BaseURL
 	env[EnvAuthToken] = token
@@ -139,6 +171,16 @@ func (s Spec) Env(token string) map[string]string {
 	env[EnvHaiku] = s.Haiku
 	env[EnvFable] = s.Fable
 	return env
+}
+
+// canonical 返回 ShieldedEnv 里的标准写法（大写）。
+func canonical(name string) string {
+	for _, n := range ShieldedEnv {
+		if strings.EqualFold(n, name) {
+			return n
+		}
+	}
+	return name
 }
 
 // Build 生成 settings 文件内容（UTF-8 JSON，LF，结尾换行）。
@@ -191,7 +233,7 @@ func Inspect(data []byte) (Inspection, error) {
 	if err := json.Unmarshal(data, &f); err != nil {
 		return in, fmt.Errorf("不是合法的 JSON：%w", err)
 	}
-	for _, n := range ManagedEnv {
+	for _, n := range AllEnv() {
 		if _, ok := f.Env[n]; !ok {
 			in.Missing = append(in.Missing, n)
 		}
@@ -282,7 +324,7 @@ func Scan(files []string) []Finding {
 		fd := Finding{File: p, Helper: len(f.APIKeyHelper) > 0 && string(f.APIKeyHelper) != "null" && string(f.APIKeyHelper) != `""`}
 		for k := range f.Env {
 			switch {
-			case IsManaged(k):
+			case IsManaged(k) || IsShielded(k):
 				fd.Covered = append(fd.Covered, k)
 			case relevant(k):
 				fd.Uncovered = append(fd.Uncovered, k)

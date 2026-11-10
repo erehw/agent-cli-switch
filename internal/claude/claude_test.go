@@ -108,7 +108,7 @@ func TestInspect(t *testing.T) {
 		t.Fatalf("%+v %v", in, err)
 	}
 	in, _ = Inspect([]byte(`{"apiKeyHelper":"C:\\x\\acsw.exe claude key s","env":{"ANTHROPIC_AUTH_TOKEN":"k"}}`))
-	if in.HelperQuoted || in.HelperExe != `C:\x\acsw.exe` || !in.HasPlainKey || len(in.Missing) != len(ManagedEnv)-1 {
+	if in.HelperQuoted || in.HelperExe != `C:\x\acsw.exe` || !in.HasPlainKey || len(in.Missing) != len(AllEnv())-1 {
 		t.Fatalf("%+v", in)
 	}
 }
@@ -148,5 +148,59 @@ func TestConfigDir(t *testing.T) {
 	}
 	if got := ConfigDir(func(string) string { return "" }); !strings.HasSuffix(got, ".claude") {
 		t.Fatal(got)
+	}
+}
+
+// /model 菜单的名字、说明等变量（ShieldedEnv）默认写空串，挡住用户级 settings 里别的 provider 的值；可以用 --env 改。
+func TestShieldedEnv(t *testing.T) {
+	s := Spec{BaseURL: "http://x", Model: "m", Opus: "o", Extra: map[string]string{"anthropic_default_opus_model_name": "My Opus", "FOO": "bar"}}
+	env := s.Env("")
+	for _, n := range ShieldedEnv {
+		v, ok := env[n]
+		if !ok {
+			t.Fatalf("缺 %s", n)
+		}
+		if n == "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME" {
+			if v != "My Opus" {
+				t.Fatalf("--env 应能改 %s：%q", n, v)
+			}
+		} else if v != "" {
+			t.Fatalf("%s 应为空串：%q", n, v)
+		}
+	}
+	if env["FOO"] != "bar" || env[EnvOpus] != "o" || env[EnvModel] != "m" {
+		t.Fatal(env)
+	}
+	if _, ok := env["anthropic_default_opus_model_name"]; ok {
+		t.Fatal("应改成标准写法")
+	}
+	for _, n := range []string{"ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", "CLAUDE_CODE_SUBAGENT_MODEL", "ANTHROPIC_CUSTOM_MODEL_OPTION"} {
+		if IsManaged(n) || !IsShielded(n) {
+			t.Fatal(n)
+		}
+		if err := ValidateExtraEnv(map[string]string{n: "x"}); err != nil {
+			t.Fatal(n, err)
+		}
+	}
+	if err := ValidateExtraEnv(map[string]string{EnvOpus: "x"}); err == nil {
+		t.Fatal("ManagedEnv 不能用 --env 改")
+	}
+	b, err := Build(Spec{BaseURL: "http://x", Model: "m"}, ModeHelper, "", `"C:\a\acsw.exe" claude key s`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := Inspect(b)
+	if err != nil || len(in.Missing) != 0 {
+		t.Fatal(in.Missing, err)
+	}
+	// Scan：用户级 settings 里的名字变量算“会被盖住”，不算漏
+	dir := t.TempDir()
+	p := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(p, []byte(`{"env":{"ANTHROPIC_DEFAULT_OPUS_MODEL_NAME":"glm-5.3[1m]","CLAUDE_CODE_SUBAGENT_MODEL":"glm","ANTHROPIC_BETAS":"x"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fs := Scan([]string{p})
+	if len(fs) != 1 || strings.Join(fs[0].Covered, ",") != "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME,CLAUDE_CODE_SUBAGENT_MODEL" || strings.Join(fs[0].Uncovered, ",") != "ANTHROPIC_BETAS" {
+		t.Fatalf("%+v", fs)
 	}
 }

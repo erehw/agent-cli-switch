@@ -313,7 +313,7 @@ func (a *App) RunClaude(opt ClaudeRunOptions) (int, error) {
 
 	cmd := exec.Command(exe, append([]string{"--settings", path}, opt.Args...)...)
 	cmd.Dir = opt.Dir
-	cmd.Env = config.ChildEnv(a.environ(), claude.ManagedEnv, nil)
+	cmd.Env = config.ChildEnv(a.environ(), claude.AllEnv(), nil)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = a.Stdin, a.Stdout, a.Stderr
 
 	// Ctrl+C 交给 claude 自己处理，acsw 只等它退出。

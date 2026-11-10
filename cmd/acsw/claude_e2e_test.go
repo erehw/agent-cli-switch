@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"acsw/internal/claude"
 	"acsw/internal/cred"
 )
 
@@ -185,7 +186,25 @@ func TestClaudeE2E(t *testing.T) {
 	portU := fake.start(t, "USER", 200)
 	portX := fake.start(t, "X401", 401)
 	const userToken = "dummy-user-token-e2e"
-	userSettings := fmt.Sprintf(`{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:%d","ANTHROPIC_AUTH_TOKEN":%q,"ANTHROPIC_MODEL":"user-model"}}`, portU, userToken)
+	// 用户级 settings 模拟 cc-switch 写的别家（GLM）配置：模型 id、菜单名字/说明、子代理模型等全写上，
+	// 再加一个 SessionStart hook 把 claude 实际看到的环境变量写到文件里（有 node 才加）。
+	userEnv := map[string]string{"ANTHROPIC_BASE_URL": fmt.Sprintf("http://127.0.0.1:%d", portU), "ANTHROPIC_AUTH_TOKEN": userToken, "ANTHROPIC_MODEL": "user-model",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.3[1m]", "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.3[1m]", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5.3-flash[1m]",
+		"ANTHROPIC_DEFAULT_FABLE_MODEL": "glm-5.3[1m]", "ANTHROPIC_SMALL_FAST_MODEL": "glm-small"}
+	for _, n := range claudeShielded() {
+		userEnv[n] = "glm-leak-" + strings.ToLower(n)
+	}
+	envDump := filepath.Join(base, "env-dump.json")
+	user := map[string]any{"env": userEnv}
+	if node, err := exec.LookPath("node"); err == nil {
+		js := filepath.Join(base, "dump.js")
+		if err := os.WriteFile(js, []byte(`const fs=require("fs");const o={};for(const [k,v] of Object.entries(process.env)){if(/^(ANTHROPIC_|CLAUDE_CODE_)/i.test(k))o[k.toUpperCase()]=/TOKEN|_KEY/i.test(k)?(v?"<set>":""):v}fs.writeFileSync(process.argv[2],JSON.stringify(o));`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		user["hooks"] = map[string]any{"SessionStart": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": fmt.Sprintf(`"%s" "%s" "%s"`, node, js, envDump)}}}}}
+	}
+	ub, _ := json.Marshal(user)
+	userSettings := string(ub)
 	if err := os.WriteFile(filepath.Join(cfg, "settings.json"), []byte(userSettings), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -258,8 +277,8 @@ func TestClaudeE2E(t *testing.T) {
 			if q.Model == want.model {
 				sawModel = true
 			}
-			if q.Model == "user-model" {
-				t.Errorf("%s：用了用户 settings 里的模型", label)
+			if q.Model == "user-model" || strings.Contains(q.Model, "glm") {
+				t.Errorf("%s：用了用户 settings 里的模型 %q", label, q.Model)
 			}
 		}
 		if !sawModel {
@@ -304,6 +323,40 @@ func TestClaudeE2E(t *testing.T) {
 		t.Fatalf("包装 helper：%d\n%s\n%s", r.Code, r.Stdout, r.Stderr)
 	}
 	check("用法二 包装 helper", B, r)
+	// claude 实际看到的环境：用户级 settings 里别家的模型名字、说明、子代理模型等一个都不能漏进来
+	if b, err := os.ReadFile(envDump); err == nil {
+		var seen map[string]string
+		if err := json.Unmarshal(b, &seen); err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range seen {
+			if strings.Contains(strings.ToLower(v), "glm") || v == "user-model" || strings.Contains(v, strconv.Itoa(portU)) {
+				t.Errorf("用户级 settings 漏进来了：%s", k)
+			}
+		}
+		for _, n := range claudeShielded() {
+			if v, ok := seen[n]; !ok || v != "" {
+				t.Errorf("%s 应为空串（有：%v）", n, ok)
+			}
+		}
+		if seen["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != B.model || seen["ANTHROPIC_MODEL"] != B.model || seen["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "" {
+			t.Errorf("模型变量不对：haiku=%q model=%q opus=%q", seen["ANTHROPIC_DEFAULT_HAIKU_MODEL"], seen["ANTHROPIC_MODEL"], seen["ANTHROPIC_DEFAULT_OPUS_MODEL"])
+		}
+		t.Logf("环境检查：%d 个 ANTHROPIC_/CLAUDE_CODE_ 变量，没有用户级的值", len(seen))
+		_ = os.Remove(envDump)
+	} else if _, nerr := exec.LookPath("node"); nerr == nil {
+		t.Errorf("SessionStart hook 没写出环境文件：%v", err)
+	}
+	// 用别名选模型：opus 没配，haiku 是 source 的
+	r = run(t, env, proj, "", exe, "claude", B.name, "--model", "haiku", "-p", "say hi")
+	if r.Code != 0 {
+		t.Fatalf("--model haiku：%d %s", r.Code, r.Stderr)
+	}
+	for _, q := range fake.take() {
+		if strings.Contains(q.Model, "glm") || q.Port != B.port {
+			t.Errorf("--model haiku 用了 %q（端口 %d）", q.Model, q.Port)
+		}
+	}
 
 	r = run(t, env, proj, "", exe, "claude", B.name, "--key-mode", "plain", "-p", "say hi")
 	if r.Code != 0 || !strings.Contains(r.Stdout, "E2E-OK-B") {
@@ -417,3 +470,5 @@ func TestClaudeE2E(t *testing.T) {
 		t.Fatal("明文文件应已删除")
 	}
 }
+
+func claudeShielded() []string { return claude.ShieldedEnv }

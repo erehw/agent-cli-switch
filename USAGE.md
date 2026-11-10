@@ -113,6 +113,7 @@ acsw source rm gw1 --yes             # 删 key、删生成的文件 / deletes th
 ```
 
 - 生成的文件在 `%USERPROFILE%\agent-source\claude\settings\`（`<source>.json` 是 helper 文件，`<source>.plain.json` 是明文文件）。直接用：`claude --settings "<文件>"`。
+- `/model` 菜单只显示 source 的模型：生成文件把菜单名字、说明、子代理模型等变量写成空串，用户级 settings（比如 cc-switch 写的别家配置）里的同名变量不会漏进来。升级 acsw 后要重启 claude 才生效（settings 只在启动时读）。
 - acsw 不改 `~\.claude`，不设 `CLAUDE_CONFIG_DIR`，会话还在原来的地方。用户级 settings 里有 acsw 盖不住的 `ANTHROPIC_*` 变量时会提醒，`--strict` 时拒绝启动。
 - 不要自己再传 `--settings`。source 不能叫 `export`、`key` 或 `cmd`。claude source 不能给 codex home 用。
 - `acsw claude cmd gw1` 生成 `claude-gw1.cmd`，内容就是 `"<acsw.exe>" claude gw1 %*` 加 `exit /b %ERRORLEVEL%`：参数原样转交，stdin 继承，退出码传回；文件里不含 key。默认放在 acsw.exe 所在目录（通常在 PATH 里，之后直接 `claude-gw1 -p "hi"`）。acsw 生成的同名文件直接覆盖；别人写的文件不覆盖（99994012 `confirm_required`），加 `--force` 才覆盖。网页 Claude Code 页签每个 source 有「生成 .cmd」按钮。
@@ -121,6 +122,7 @@ acsw source rm gw1 --yes             # 删 key、删生成的文件 / deletes th
 English:
 
 - Generated files live in `%USERPROFILE%\agent-source\claude\settings\` (`<source>.json` is the helper file, `<source>.plain.json` the plaintext one). Use them directly with `claude --settings "<file>"`.
+- The `/model` menu shows only the source's models: the generated file sets the menu name/description, subagent model and similar variables to empty strings, so same-named variables in user settings (e.g. another provider's config written by cc-switch) cannot leak in. Restart claude after upgrading acsw (settings are read at startup).
 - acsw does not modify `~\.claude` and does not set `CLAUDE_CONFIG_DIR`; sessions stay where they are. `ANTHROPIC_*` variables in user settings that acsw cannot cover produce a warning; `--strict` refuses to launch.
 - Do not pass `--settings` yourself. Sources cannot be named `export`, `key` or `cmd`. A claude source cannot be used by a codex home.
 - `acsw claude cmd gw1` writes `claude-gw1.cmd`, which is just `"<acsw.exe>" claude gw1 %*` plus `exit /b %ERRORLEVEL%`: arguments are passed through, stdin is inherited, the exit code comes back; the file holds no key. By default it goes next to acsw.exe (usually on PATH, so `claude-gw1 -p "hi"` works). An acsw-generated file of the same name is overwritten; a file acsw did not write is left alone (99994012 `confirm_required`) unless you add `--force`. In the web UI's Claude Code tab each source has a "生成 .cmd" (generate .cmd) button.
