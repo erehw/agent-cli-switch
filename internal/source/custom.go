@@ -61,6 +61,9 @@ func loadCustom(p config.Paths, name string) (*config.SourceMeta, error) {
 	if meta.Type != config.ProviderCustom {
 		return nil, fmt.Errorf("source %s 是 %s 类型，这里只能改 custom 类型", name, meta.Type)
 	}
+	if meta.IsClaude() {
+		return nil, fmt.Errorf("source %s 是 claude source，请用 claude 的参数修改（acsw source edit %s --base-url/--model/--opus ...）", name, name)
+	}
 	return meta, nil
 }
 

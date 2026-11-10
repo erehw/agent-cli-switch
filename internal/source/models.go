@@ -56,12 +56,32 @@ func truncate(s string, n int) string {
 // FetchModels 用 Authorization: Bearer <key> 请求 <base_url>/models。
 // 2xx 时原样返回响应体（不解析、不改动）；否则返回 *ModelsHTTPError 或网络错误，错误里不含 key。
 func FetchModels(ctx context.Context, client *http.Client, baseURL, key string) ([]byte, error) {
-	u := ModelsURL(baseURL)
+	return fetchModels(ctx, client, ModelsURL(baseURL), key, func(h http.Header) {
+		h.Set("Authorization", "Bearer "+key)
+	})
+}
+
+// ClaudeModelsURL 是 Anthropic 协议的模型列表地址：base_url（不含 /v1）去掉结尾的 / 再接 /v1/models。
+func ClaudeModelsURL(baseURL string) string {
+	return strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/v1/models"
+}
+
+// FetchClaudeModels 按 Anthropic 协议请求 <base_url>/v1/models：同时带 x-api-key 和 Authorization: Bearer（网关两种都有人用），
+// 以及 anthropic-version。返回原始响应体；错误里不含 key。
+func FetchClaudeModels(ctx context.Context, client *http.Client, baseURL, key string) ([]byte, error) {
+	return fetchModels(ctx, client, ClaudeModelsURL(baseURL), key, func(h http.Header) {
+		h.Set("x-api-key", key)
+		h.Set("Authorization", "Bearer "+key)
+		h.Set("anthropic-version", "2023-06-01")
+	})
+}
+
+func fetchModels(ctx context.Context, client *http.Client, u, key string, auth func(http.Header)) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("构造请求失败：%s", redact(err.Error(), key))
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
+	auth(req.Header)
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {

@@ -32,6 +32,9 @@ func (a *App) SourceModels(ctx context.Context, name string) ([]byte, error) {
 	if err != nil {
 		return nil, exitcode.WithF(exitcode.SourceInvalid, err, exitcode.F{"source": name})
 	}
+	if meta.IsClaude() {
+		return a.claudeModels(ctx, name, meta)
+	}
 	if meta.Type != config.ProviderCustom {
 		return nil, exitcode.WithF(exitcode.SourceInvalid, fmt.Errorf("source %s 是 %s 类型；source models 只支持 custom（API）source", name, meta.Type), exitcode.F{"source": name})
 	}

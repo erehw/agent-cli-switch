@@ -26,6 +26,7 @@ import (
 	"acsw/internal/core"
 	"acsw/internal/exitcode"
 	"acsw/internal/home"
+	"acsw/internal/source"
 	"acsw/internal/web"
 )
 
@@ -53,7 +54,14 @@ const usage = `acsw %s — agent cli switch（别名 code switch）
   acsw source list
   acsw source edit <名称> [--base-url <URL>] [--model <模型>] [--set-key|--key-stdin]   # 只改 custom
   acsw source rm <名称> --yes                  # 只删 custom；有 home 在用就拒绝
-  acsw source models <名称>                    # 只限 custom：GET <base_url>/models，原样输出响应体
+  acsw source models <名称>                    # 只限 custom：GET <base_url>/models（claude source：<base_url>/v1/models），原样输出响应体
+  acsw source add <名称> --tool claude --base-url <URL> --model <模型> [--opus <模型>] [--sonnet <模型>] [--haiku <模型>] [--fable <模型>]
+                 [--key-mode helper|plain] [--env 名=值 ...] [--key-stdin]   # 给 Claude Code 用；key 存凭据管理器 acsw/claude/<名称>
+  acsw source edit <claude source> [--base-url ..] [--model ..] [--opus ..] [--sonnet ..] [--haiku ..] [--fable ..] [--key-mode ..]
+                 [--env 名=值 ...|--clear-env] [--set-key|--key-stdin]     # 模型写空串 "" 表示清空
+  acsw claude <source> [--key-mode helper|plain] [--strict] [--] [claude 参数...]   # 用 claude source 启动 claude
+  acsw claude export <source> [--key-mode helper|plain]   # 生成 settings 文件，给 claude --settings <文件> 用
+  acsw claude key <source>                     # 输出 key（给 apiKeyHelper 用，别的场合不要用）
   acsw home add <名称>
   acsw home rm <名称> [--purge] --yes         # 要求没有项目映射、没有 codex 在跑；默认目录移到备份区，--purge 彻底删除
   acsw home cmd <home>                         # 生成 home\<home>\acsw-codex.cmd（给别的程序调用）
@@ -72,6 +80,7 @@ const usage = `acsw %s — agent cli switch（别名 code switch）
 
 根目录：%s（可用环境变量 ACSW_ROOT 改）
 codex 路径：PATH 里的 codex，或环境变量 ACSW_CODEX 指定
+claude 路径：PATH 里的 claude，或环境变量 ACSW_CLAUDE 指定；settings 文件在 <根目录的上一级>\claude\settings
 
 给别的程序调用：用 acsw home cmd <home> 生成的 acsw-codex.cmd（路径里可见 home）。
 自己在终端：在已映射目录里直接 acsw codex ...
@@ -87,6 +96,7 @@ func realMain(args []string) int {
 		return fail(err)
 	}
 	app.Version = versionString()
+	app.SelfExe = selfExe()
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Printf(usage, versionString(), app.Paths.Root)
 		return 0
@@ -98,6 +108,8 @@ func realMain(args []string) int {
 		return 0
 	case "source":
 		return cmdSource(app, rest)
+	case "claude":
+		return cmdClaude(app, rest)
 	case "home":
 		return cmdHome(app, rest)
 	case "map":
@@ -380,6 +392,18 @@ func cmdSource(app *core.App, rest []string) int {
 			return 0
 		}
 		for _, s := range list {
+			if s.Meta.IsClaude() {
+				login := "key：有（" + app.Cred.Kind() + "）"
+				if !s.HasLogin {
+					login = "key：缺"
+				}
+				km := s.Meta.KeyMode
+				if km == "" {
+					km = "helper"
+				}
+				fmt.Printf("%-12s %-7s %s  key_mode=%s  %s  model=%s\n", s.Name, "claude", login, km, s.Meta.BaseURL, s.Meta.Model)
+				continue
+			}
 			login := "登录：有"
 			if s.Meta.Type == config.ProviderCustom {
 				login = "key：有（" + app.Cred.Kind() + "）"
@@ -399,11 +423,41 @@ func cmdSource(app *core.App, rest []string) int {
 		}
 		return 0
 	case "add":
-		f, pos, _, err := parseArgs(rest[1:], set("type", "from", "base-url", "model"), set("key-stdin"))
+		envs, args := takeMulti(rest[1:], "env")
+		f, pos, _, err := parseArgs(args, set("type", "from", "base-url", "model", "tool", "opus", "sonnet", "haiku", "fable", "key-mode"), set("key-stdin"))
 		if err != nil || len(pos) != 1 {
-			return fail(core.Usage("用法：acsw source add <名称> --type openai|custom ..."))
+			return fail(core.Usage("用法：acsw source add <名称> --type openai|custom ... 或 --tool claude ..."))
 		}
 		name := pos[0]
+		switch f["tool"] {
+		case "", "codex":
+			if len(envs) > 0 || f["opus"] != "" || f["sonnet"] != "" || f["haiku"] != "" || f["fable"] != "" || f["key-mode"] != "" {
+				return fail(core.Usage("--env/--opus/--sonnet/--haiku/--fable/--key-mode 只用于 --tool claude"))
+			}
+		case "claude":
+			if f["type"] != "" && f["type"] != "custom" {
+				return fail(core.Usage("claude source 只能是 custom 类型（不用写 --type）"))
+			}
+			if f["base-url"] == "" || f["model"] == "" {
+				return fail(core.Usage("claude source 需要 --base-url 和 --model"))
+			}
+			extra, err := parseEnvs(envs)
+			if err != nil {
+				return fail(core.Usage(err.Error()))
+			}
+			key, err := readKey(f["key-stdin"] != "")
+			if err != nil {
+				return fail(err)
+			}
+			fl := source.ClaudeFields{BaseURL: f["base-url"], Model: f["model"], Opus: f["opus"], Sonnet: f["sonnet"], Haiku: f["haiku"], Fable: f["fable"], KeyMode: f["key-mode"], ExtraEnv: extra}
+			if err := app.AddClaudeSource(name, fl, key); err != nil {
+				return fail(err)
+			}
+			fmt.Printf("已建 claude source %s，key 已存入%s（目标名 acsw/claude/%s）。启动：acsw claude %s\n", name, app.Cred.Kind(), name, name)
+			return 0
+		default:
+			return fail(core.Usage("--tool 只能是 codex 或 claude"))
+		}
 		switch f["type"] {
 		case "openai":
 			if err := app.AddOpenAISource(name, f["from"]); err != nil {
@@ -428,6 +482,11 @@ func cmdSource(app *core.App, rest []string) int {
 			return fail(errors.New("--type 只能是 openai 或 custom"))
 		}
 	case "edit":
+		if len(rest) > 1 && !strings.HasPrefix(rest[1], "-") {
+			if meta, err := config.LoadSource(app.Paths, rest[1]); err == nil && meta.IsClaude() {
+				return editClaude(app, rest[1:])
+			}
+		}
 		f, pos, _, err := parseArgs(rest[1:], set("base-url", "model"), set("key-stdin", "set-key"))
 		if err != nil || len(pos) != 1 {
 			return fail(core.Usage("用法：acsw source edit <名称> [--base-url <URL>] [--model <模型>] [--set-key|--key-stdin]（只支持 custom；不写的项不改）"))
@@ -536,14 +595,20 @@ func readKey(fromStdin bool) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
-func serveUI(app *core.App, port int, open bool) int {
-	s := &web.Server{App: app, Token: web.NewToken(), Port: port}
-	if exe, err := os.Executable(); err == nil {
-		if p, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = p
-		}
-		s.AcswExe = exe
+// selfExe 返回 acsw 自己的完整路径（解析符号链接）；取不到时为 ""。
+func selfExe() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
 	}
+	if p, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = p
+	}
+	return exe
+}
+
+func serveUI(app *core.App, port int, open bool) int {
+	s := &web.Server{App: app, Token: web.NewToken(), Port: port, AcswExe: selfExe()}
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return fail(fmt.Errorf("端口 %d 打不开：%w（换一个：--port 7800）", port, err))

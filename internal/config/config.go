@@ -63,6 +63,20 @@ func (p Paths) LockFile() string { return filepath.Join(p.Root, ".acsw.lock") }
 
 // BackupDir 是根目录下的备份区（删除的 source 移到这里）。
 func (p Paths) BackupDir() string { return filepath.Join(p.Root, ".acsw-backup") }
+
+// ClaudeSettingsDir 是生成给 Claude Code 的 settings 文件的目录：<根目录的上一级>\claude\settings。
+// 默认根目录 ~\agent-source\codex 时即 ~\agent-source\claude\settings。
+func (p Paths) ClaudeSettingsDir() string {
+	return filepath.Join(filepath.Dir(filepath.Clean(p.Root)), "claude", "settings")
+}
+
+// ClaudeSettingsFile 是某个 claude source 的 settings 文件：helper 模式 <source>.json，plain 模式 <source>.plain.json。
+func (p Paths) ClaudeSettingsFile(name string, plain bool) string {
+	if plain {
+		return filepath.Join(p.ClaudeSettingsDir(), name+".plain.json")
+	}
+	return filepath.Join(p.ClaudeSettingsDir(), name+".json")
+}
 func (p Paths) SourceMetaFile(name string) string {
 	return filepath.Join(p.SourceDir(name), "acsw-source.toml")
 }
@@ -207,11 +221,37 @@ func (m *Map) MatchHome(dir string, ci bool) (Project, bool) {
 
 // SourceMeta 对应 source/<name>/acsw-source.toml。
 type SourceMeta struct {
-	Type    string    `toml:"type"` // openai 或 custom
+	Tool    string    `toml:"tool,omitempty"` // 空或 codex：给 codex 用；claude：给 Claude Code 用（只能是 custom）
+	Type    string    `toml:"type"`           // openai 或 custom
 	BaseURL string    `toml:"base_url,omitempty"`
 	Model   string    `toml:"model,omitempty"`
 	Created time.Time `toml:"created,omitempty"`
+
+	// 以下只用于 claude source。
+	OpusModel   string            `toml:"opus_model,omitempty"`
+	SonnetModel string            `toml:"sonnet_model,omitempty"`
+	HaikuModel  string            `toml:"haiku_model,omitempty"`
+	FableModel  string            `toml:"fable_model,omitempty"`
+	KeyMode     string            `toml:"key_mode,omitempty"` // helper（默认）或 plain
+	ExtraEnv    map[string]string `toml:"extra_env,omitempty"`
 }
+
+// 工具名。
+const (
+	ToolCodex  = "codex"
+	ToolClaude = "claude"
+)
+
+// ToolName 返回 source 属于哪个工具：codex 或 claude。
+func (s SourceMeta) ToolName() string {
+	if s.Tool == ToolClaude {
+		return ToolClaude
+	}
+	return ToolCodex
+}
+
+// IsClaude 表示这是给 Claude Code 用的 source。
+func (s SourceMeta) IsClaude() bool { return s.Tool == ToolClaude }
 
 // Provider 返回 source 对应的 provider 名。
 func (s SourceMeta) Provider() string {
@@ -239,6 +279,15 @@ func LoadSource(p Paths, name string) (*SourceMeta, error) {
 	}
 	if s.Type != ProviderOpenAI && s.Type != ProviderCustom {
 		return nil, fmt.Errorf("source %q 的类型 %q 不认识，只能是 openai 或 custom", name, s.Type)
+	}
+	switch s.Tool {
+	case "", ToolCodex:
+	case ToolClaude:
+		if s.Type != ProviderCustom {
+			return nil, fmt.Errorf("source %q 是 claude source，类型只能是 custom，现在是 %q", name, s.Type)
+		}
+	default:
+		return nil, fmt.Errorf("source %q 的工具 %q 不认识，只能是 codex 或 claude", name, s.Tool)
 	}
 	return &s, nil
 }

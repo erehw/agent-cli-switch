@@ -29,7 +29,15 @@ func TestMain(m *testing.M) {
 		_, hasKey := os.LookupEnv(config.KeyEnv)
 		in, _ := io.ReadAll(os.Stdin) // 读到 EOF：stdin 没关的话这里会卡住，测试会超时
 		sum := sha256.Sum256(in)
-		b, _ := json.Marshal(map[string]any{"codex_home": os.Getenv("CODEX_HOME"), "has_key": hasKey, "args": os.Args[1:], "stdin_len": len(in), "stdin_sha": hex.EncodeToString(sum[:])})
+		var envNames []string // 子进程环境里与 Claude 登录有关的变量名（给 acsw claude 的测试用）
+		for _, kv := range os.Environ() {
+			n, _, _ := strings.Cut(kv, "=")
+			if u := strings.ToUpper(n); strings.HasPrefix(u, "ANTHROPIC_") || strings.HasPrefix(u, "CLAUDE_") {
+				envNames = append(envNames, u)
+			}
+		}
+		sort.Strings(envNames)
+		b, _ := json.Marshal(map[string]any{"codex_home": os.Getenv("CODEX_HOME"), "has_key": hasKey, "args": os.Args[1:], "stdin_len": len(in), "stdin_sha": hex.EncodeToString(sum[:]), "env_names": envNames})
 		_ = os.WriteFile(out, b, 0o600)
 		os.Exit(7)
 	}

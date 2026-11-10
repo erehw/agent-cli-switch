@@ -117,6 +117,9 @@ func (a *App) RemoveCustomSource(name string) (string, error) {
 		return "", err
 	}
 	defer unlock()
+	if meta, err := config.LoadSource(a.Paths, name); err == nil && meta.IsClaude() {
+		return source.RemoveClaude(a.Paths, a.Cred, name, time.Now())
+	}
 	m, err := config.LoadMap(a.Paths)
 	if err != nil {
 		return "", err

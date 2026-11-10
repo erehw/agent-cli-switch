@@ -21,6 +21,14 @@ type Store interface {
 // Target 返回某个 source 的凭据目标名：acsw/codex/<name>。
 func Target(source string) string { return "acsw/codex/" + source }
 
+// TargetFor 返回某个工具的 source 的凭据目标名：acsw/<tool>/<name>（tool 为空按 codex）。
+func TargetFor(tool, source string) string {
+	if tool == "" {
+		tool = "codex"
+	}
+	return "acsw/" + tool + "/" + source
+}
+
 // Memory 是内存实现，用于单测。
 type Memory struct {
 	mu sync.Mutex

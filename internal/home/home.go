@@ -204,6 +204,9 @@ func Use(env Env, opt UseOptions) (res UseResult, err error) {
 	if err != nil {
 		return res, err
 	}
+	if newMeta.IsClaude() {
+		return res, exitcode.WithF(exitcode.ToolMismatch, fmt.Errorf("source %s 是给 Claude Code 用的，不能给 codex home 用；启动 Claude 用 acsw claude %s", opt.Source, opt.Source), exitcode.F{"home": opt.Home, "source": opt.Source, "tool": config.ToolClaude})
+	}
 	m, err := config.LoadMap(p)
 	if err != nil {
 		return res, err

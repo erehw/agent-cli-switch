@@ -26,12 +26,16 @@ const (
 	SourceInvalid  Code = 99994007 // source 不存在、类型不对（如对 openai 查模型）或元数据损坏
 	ReadonlyAlias  Code = 99994008 // home 是官方 CODEX_HOME 的只读别名，拒绝 use/改配置等写操作
 	HomeInUse      Code = 99994009 // home 还有项目映射或在跑的 codex，拒绝删除
+	ToolMismatch   Code = 99994010 // source 属于另一个工具（如把 claude source 用到 codex home，或反过来）
+	SettingsClash  Code = 99994011 // --strict 时发现用户级/项目级 Claude settings 里有会漏进来的登录设置
 
 	KeyUnreadable Code = 99995001 // 凭据管理器里读不到 key
 	CodexNotFound Code = 99995002 // 找不到 codex 可执行文件
 	LockBusy      Code = 99995003 // 等全局锁超时（另一个 acsw 正在改配置）
 	CodexStart    Code = 99995004 // codex 启动失败
 	Upstream      Code = 99995005 // 请求上游失败（/models 非 2xx、网络、超时）
+	ClaudeMissing Code = 99995006 // 找不到 claude 可执行文件
+	ClaudeStart   Code = 99995007 // claude 启动失败
 	Other         Code = 99995999 // 其他 acsw 错误
 )
 
@@ -92,6 +96,10 @@ var kinds = map[Code]string{
 	SourceInvalid:  "source_invalid",
 	ReadonlyAlias:  "home_readonly_alias",
 	HomeInUse:      "home_in_use",
+	ToolMismatch:   "source_tool_mismatch",
+	SettingsClash:  "settings_conflict",
+	ClaudeMissing:  "claude_not_found",
+	ClaudeStart:    "claude_start_failed",
 	KeyUnreadable:  "key_unreadable",
 	CodexNotFound:  "codex_not_found",
 	LockBusy:       "lock_busy",

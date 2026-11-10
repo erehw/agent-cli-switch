@@ -47,6 +47,9 @@ type App struct {
 	Hook      func(step string) error
 	CI        bool   // 路径比较是否忽略大小写
 	Version   string // acsw 版本（main 注入，只用于显示）
+
+	ClaudePath string // 为空时按 ACSW_CLAUDE 或 PATH 里的 claude 找
+	SelfExe    string // acsw.exe 的完整路径（main 注入），用于生成 apiKeyHelper
 }
 
 // New 用真实系统依赖建 App。

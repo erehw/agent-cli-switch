@@ -139,7 +139,7 @@ func List(p config.Paths, store cred.Store, m *config.Map) ([]Info, error) {
 		if meta.Type == config.ProviderOpenAI {
 			in.HasLogin = config.Exists(AuthFile(p, n))
 		} else {
-			_, err := store.Get(cred.Target(n))
+			_, err := store.Get(cred.TargetFor(meta.Tool, n))
 			in.HasLogin = err == nil
 		}
 		out = append(out, in)
