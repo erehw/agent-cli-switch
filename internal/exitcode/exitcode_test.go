@@ -7,7 +7,7 @@ import (
 )
 
 func TestCodesUniqueAndInRange(t *testing.T) {
-	all := []Code{NotMapped, ExpectMismatch, NoSource, BadArgs, HomeConflict, HomeNotFound, SourceInvalid, ReadonlyAlias,
+	all := []Code{NotMapped, ExpectMismatch, NoSource, BadArgs, HomeConflict, HomeNotFound, SourceInvalid, ReadonlyAlias, HomeInUse,
 		KeyUnreadable, CodexNotFound, LockBusy, CodexStart, Upstream, Other}
 	seen := map[Code]bool{}
 	for _, c := range all {

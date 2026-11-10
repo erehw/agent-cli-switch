@@ -25,6 +25,7 @@ const (
 	HomeNotFound   Code = 99994006 // home 不存在或名称不合法
 	SourceInvalid  Code = 99994007 // source 不存在、类型不对（如对 openai 查模型）或元数据损坏
 	ReadonlyAlias  Code = 99994008 // home 是官方 CODEX_HOME 的只读别名，拒绝 use/改配置等写操作
+	HomeInUse      Code = 99994009 // home 还有项目映射或在跑的 codex，拒绝删除
 
 	KeyUnreadable Code = 99995001 // 凭据管理器里读不到 key
 	CodexNotFound Code = 99995002 // 找不到 codex 可执行文件
@@ -90,6 +91,7 @@ var kinds = map[Code]string{
 	HomeNotFound:   "home_not_found",
 	SourceInvalid:  "source_invalid",
 	ReadonlyAlias:  "home_readonly_alias",
+	HomeInUse:      "home_in_use",
 	KeyUnreadable:  "key_unreadable",
 	CodexNotFound:  "codex_not_found",
 	LockBusy:       "lock_busy",

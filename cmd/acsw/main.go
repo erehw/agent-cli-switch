@@ -56,10 +56,12 @@ const usage = `acsw %s — agent cli switch（别名 code switch）
   acsw source rm <名称> --yes                  # 只删 custom；有 home 在用就拒绝
   acsw source models <名称>                    # 只限 custom：GET <base_url>/models，原样输出响应体
   acsw home add <名称>
+  acsw home rm <名称> [--purge] --yes         # 要求没有项目映射、没有 codex 在跑；默认目录移到备份区，--purge 彻底删除
   acsw home cmd <home>                         # 生成 home\<home>\acsw-codex.cmd（给别的程序调用）
   acsw home alias <home> [官方CODEX_HOME]       # 把 home 设为官方目录的只读别名（默认 %%USERPROFILE%%\.codex）
   acsw home alias <home> --off                 # 取消别名
   acsw map <home> [项目目录]
+  acsw unmap [项目目录]                         # 取消一条映射（必须是映射表里的目录本身）；在跑的 codex 不受影响
   acsw use <home> <source> [--dry-run] [--strict]
   acsw codex [--home <home>] [--expect-home <home>] [codex 参数...]
   acsw run [codex] [...]                       # 等同 acsw codex（兼容旧用法）
@@ -114,6 +116,27 @@ func realMain(args []string) int {
 			return fail(err)
 		}
 		fmt.Printf("已映射：%s → %s\n", abs, pos[0])
+		return 0
+	case "unmap":
+		_, pos, _, err := parseArgs(rest, nil, nil)
+		if err != nil || len(pos) > 1 {
+			return fail(core.Usage("用法：acsw unmap [项目目录]（不写目录就用当前目录；必须是映射表里的那条目录本身）"))
+		}
+		if len(pos) == 0 {
+			wd, werr := os.Getwd()
+			if werr != nil {
+				return fail(werr)
+			}
+			pos = append(pos, wd)
+		}
+		r, err := app.UnmapProject(pos[0])
+		if err != nil {
+			return fail(err)
+		}
+		fmt.Printf("已取消映射：%s（原来 → home %s）\n", r.Dir, r.Home)
+		if r.Running > 0 {
+			fmt.Printf("注意：这个目录下还有 %d 个 codex 在跑，它们不受影响；之后在这里运行 acsw codex 会提示未映射\n", r.Running)
+		}
 		return 0
 	case "use":
 		f, pos, _, err := parseArgs(rest, nil, set("dry-run", "strict"))
@@ -227,7 +250,7 @@ func realMain(args []string) int {
 
 func cmdHome(app *core.App, rest []string) int {
 	if len(rest) == 0 {
-		return fail(core.Usage("用法：acsw home add <名称> | acsw home cmd <home> | acsw home alias <home> [官方目录|--off]"))
+		return fail(core.Usage("用法：acsw home add <名称> | acsw home rm <名称> [--purge] --yes | acsw home cmd <home> | acsw home alias <home> [官方目录|--off]"))
 	}
 	switch rest[0] {
 	case "add":
@@ -263,6 +286,34 @@ func cmdHome(app *core.App, rest []string) int {
 		}
 		fmt.Printf("已设置：home %s = 官方 CODEX_HOME %s 的只读别名（只改了 map.toml，没有碰官方目录）\n", pos[0], abs)
 		fmt.Printf("映射到 %s 的目录里运行 acsw codex，会直接用官方目录和它自己的登录启动 codex\n", pos[0])
+		return 0
+	case "rm":
+		f, pos, _, err := parseArgs(rest[1:], nil, set("yes", "purge"))
+		if err != nil || len(pos) != 1 {
+			return fail(core.Usage("用法：acsw home rm <名称> [--purge] --yes"))
+		}
+		if f["yes"] == "" {
+			what := "home 目录（含 codex 会话）会移到 " + app.Paths.BackupDir() + "，可以找回"
+			if f["purge"] != "" {
+				what = "--purge：home 目录（含 codex 会话）会被彻底删除，不能找回"
+			}
+			return fail(core.Usage("删除前请确认：加 --yes。" + what + "。别名 home 的官方目录不会被动。"))
+		}
+		r, err := app.RemoveHome(pos[0], f["purge"] != "")
+		if err != nil {
+			return fail(err)
+		}
+		switch {
+		case r.Purged:
+			fmt.Printf("已删除 home %s，目录已彻底删除\n", r.Home)
+		case r.BackupDir != "":
+			fmt.Printf("已删除 home %s，目录移到 %s\n", r.Home, r.BackupDir)
+		default:
+			fmt.Printf("已删除 home %s（只有 map 记录，没有目录）\n", r.Home)
+		}
+		if r.AliasOf != "" {
+			fmt.Printf("官方目录 %s 没有改动\n", r.AliasOf)
+		}
 		return 0
 	case "cmd":
 		if len(rest) != 2 {

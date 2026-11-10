@@ -76,7 +76,7 @@ func TestErrorJSONLine(t *testing.T) {
 		t.Fatalf("固定字段应在前：%q", line)
 	}
 	for _, c := range []exitcode.Code{exitcode.NotMapped, exitcode.ExpectMismatch, exitcode.NoSource, exitcode.BadArgs, exitcode.HomeConflict,
-		exitcode.HomeNotFound, exitcode.SourceInvalid, exitcode.ReadonlyAlias, exitcode.KeyUnreadable, exitcode.CodexNotFound, exitcode.LockBusy,
+		exitcode.HomeNotFound, exitcode.SourceInvalid, exitcode.ReadonlyAlias, exitcode.HomeInUse, exitcode.KeyUnreadable, exitcode.CodexNotFound, exitcode.LockBusy,
 		exitcode.CodexStart, exitcode.Upstream, exitcode.Other} {
 		if c.Kind() == "" || (c != exitcode.Other && c.Kind() == "other") {
 			t.Fatal("每个码都要有 kind", c)
