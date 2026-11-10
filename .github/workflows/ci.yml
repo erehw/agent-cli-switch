@@ -1,0 +1,33 @@
+# CI：每次推送和 PR 都跑 gofmt（仅 Linux）、go vet、go test。
+# CI: gofmt (Linux only), go vet and go test on every push and pull request.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Windows 上 checkout 会把换行转成 CRLF，gofmt 会误报，所以只在 Linux 上检查格式。
+      # On Windows the checkout uses CRLF and gofmt would complain, so only check formatting on Linux.
+      - name: gofmt
+        if: runner.os == 'Linux'
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "$out"; exit 1; fi
+      - run: go vet ./...
+      - run: go test -count=1 ./...

@@ -1,0 +1,45 @@
+# 发布：推送 v* 标签时先跑测试，再编译 Windows amd64 版 acsw.exe（版本号取标签名），上传到 GitHub Release。
+# Release: on a v* tag, run the tests, build acsw.exe for Windows amd64 (version = tag name) and upload it to a GitHub Release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+      - name: build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          go build -trimpath -ldflags "-X main.version=$env:GITHUB_REF_NAME" -o dist/acsw.exe ./cmd/acsw
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./dist/acsw.exe version
+          $zip = "dist/acsw-$env:GITHUB_REF_NAME-windows-amd64.zip"
+          Compress-Archive -Path dist/acsw.exe, README.md, USAGE.md, LICENSE -DestinationPath $zip
+          (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() + "  " + (Split-Path $zip -Leaf) | Out-File -Encoding ascii "$zip.sha256"
+      - name: upload
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = "dist/acsw-$env:GITHUB_REF_NAME-windows-amd64.zip"
+          gh release view $env:GITHUB_REF_NAME 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:GITHUB_REF_NAME $zip "$zip.sha256" --clobber
+          } else {
+            gh release create $env:GITHUB_REF_NAME $zip "$zip.sha256" --title $env:GITHUB_REF_NAME --notes-from-tag
+          }

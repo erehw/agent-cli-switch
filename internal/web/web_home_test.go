@@ -14,7 +14,8 @@ func j(v any) string { b, _ := json.Marshal(v); return string(b) }
 
 func TestHomeEndpoints(t *testing.T) {
 	s, p := newServer(t)
-	s.AcswExe = `D:\x\acsw.exe`
+	exe := filepath.Join(t.TempDir(), "acsw.exe")
+	s.AcswExe = exe
 	h := s.Handler()
 	post := func(url string, body any) (int, map[string]any) {
 		w := do(h, "POST", url, host, "tok123", j(body))
@@ -67,7 +68,7 @@ func TestHomeEndpoints(t *testing.T) {
 		t.Fatal(c, d)
 	}
 	b, _ := os.ReadFile(filepath.Join(p.HomeDir("home7"), "acsw-codex.cmd"))
-	if !strings.Contains(string(b), `"D:\x\acsw.exe" codex --expect-home home7`) {
+	if !strings.Contains(string(b), `"`+exe+`" codex --expect-home home7`) {
 		t.Fatal(string(b))
 	}
 
