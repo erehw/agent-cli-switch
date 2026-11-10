@@ -98,12 +98,14 @@ acsw source rm gw1 --yes             # 删 key、删生成的文件 / deletes th
 - 生成的文件在 `%USERPROFILE%\agent-source\claude\settings\`（`<source>.json` 是 helper 文件，`<source>.plain.json` 是明文文件）。直接用：`claude --settings "<文件>"`。
 - acsw 不改 `~\.claude`，不设 `CLAUDE_CONFIG_DIR`，会话还在原来的地方。用户级 settings 里有 acsw 盖不住的 `ANTHROPIC_*` 变量时会提醒，`--strict` 时拒绝启动。
 - 不要自己再传 `--settings`。source 不能叫 `export` 或 `key`。claude source 不能给 codex home 用。
+- 网页（`acsw ui`）分 Codex 和 Claude Code 两个页签；新增/编辑 source 时可点「从上游获取模型」，从列表里选模型填进 model（claude 还有 opus/sonnet/haiku/fable），也可以手填。
 
 English:
 
 - Generated files live in `%USERPROFILE%\agent-source\claude\settings\` (`<source>.json` is the helper file, `<source>.plain.json` the plaintext one). Use them directly with `claude --settings "<file>"`.
 - acsw does not modify `~\.claude` and does not set `CLAUDE_CONFIG_DIR`; sessions stay where they are. `ANTHROPIC_*` variables in user settings that acsw cannot cover produce a warning; `--strict` refuses to launch.
 - Do not pass `--settings` yourself. Sources cannot be named `export` or `key`. A claude source cannot be used by a codex home.
+- The web UI (`acsw ui`) has a Codex tab and a Claude Code tab; when adding or editing a source, "fetch models from upstream" lets you pick models into model (and opus/sonnet/haiku/fable for claude), or type them freely.
 
 ## 注意 / Notes
 

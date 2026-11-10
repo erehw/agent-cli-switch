@@ -53,6 +53,12 @@ func validateCustom(baseURL, model string) (string, string, error) {
 	return strings.TrimRight(strings.TrimSpace(baseURL), "/"), strings.TrimSpace(model), nil
 }
 
+// ValidateBaseURL 校验并规整 base_url（http/https，去掉结尾的 /）。
+func ValidateBaseURL(baseURL string) (string, error) {
+	b, _, err := validateCustom(baseURL, "x")
+	return b, err
+}
+
 func loadCustom(p config.Paths, name string) (*config.SourceMeta, error) {
 	meta, err := config.LoadSource(p, name)
 	if err != nil {

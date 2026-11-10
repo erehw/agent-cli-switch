@@ -45,7 +45,8 @@ td.dir{font-size:12px;word-break:break-all}
 <legend id="formTitle">新增 custom source（API）</legend>
 <label>名称 <input type="text" id="f_name" autocomplete="off" placeholder="例如 api1"></label>
 <label>base_url <input type="text" id="f_base" autocomplete="off" placeholder="https://api.example.com/v1"></label>
-<label>model <input type="text" id="f_model" autocomplete="off"></label>
+<label>model <input type="text" id="f_model" autocomplete="off" list="dl_models_codex"> <button type="button" onclick="probeModels('codex')">从上游获取模型</button> <select id="f_pick" style="display:none" onchange="if(this.value){$('f_model').value=this.value;}"></select> <span id="f_probe"></span></label>
+<datalist id="dl_models_codex"></datalist>
 <label>key <input type="password" id="f_key" autocomplete="new-password"> <span id="keyHint" class="mut">必填</span></label>
 <button onclick="save()">保存</button> <button onclick="resetForm()">取消 / 改为新增</button>
 <div class="mut">key 只存进系统凭据管理器，页面不显示。订阅登录（openai）类型这里不能改。</div>
@@ -58,11 +59,13 @@ td.dir{font-size:12px;word-break:break-all}
 <legend id="cformTitle">新增 claude source</legend>
 <label>名称 <input type="text" id="c_name" autocomplete="off" placeholder="例如 gw1（不能叫 export 或 key）"></label>
 <label>base_url <input type="text" id="c_base" autocomplete="off" placeholder="https://gateway.example.com（不带 /v1）"></label>
-<label>model <input type="text" id="c_model" autocomplete="off" placeholder="主模型，必填"></label>
-<label>opus 模型 <input type="text" id="c_opus" autocomplete="off" placeholder="可空"></label>
-<label>sonnet 模型 <input type="text" id="c_sonnet" autocomplete="off" placeholder="可空"></label>
-<label>haiku 模型 <input type="text" id="c_haiku" autocomplete="off" placeholder="可空"></label>
-<label>fable 模型 <input type="text" id="c_fable" autocomplete="off" placeholder="可空"></label>
+<div><button type="button" onclick="probeModels('claude')">从上游获取模型</button> <span id="c_pickRow" style="display:none">选 <select id="c_pick"></select> 填入 <select id="c_pickField"><option value="c_model">model（ANTHROPIC_MODEL）</option><option value="c_opus">opus</option><option value="c_sonnet">sonnet</option><option value="c_haiku">haiku</option><option value="c_fable">fable</option></select> <button type="button" onclick="if($('c_pick').value){$($('c_pickField').value).value=$('c_pick').value;}">填入</button></span> <span id="c_probe"></span></div>
+<label>model <input type="text" id="c_model" autocomplete="off" placeholder="主模型，必填" list="dl_models_claude"></label>
+<label>opus 模型 <input type="text" id="c_opus" autocomplete="off" placeholder="可空" list="dl_models_claude"></label>
+<label>sonnet 模型 <input type="text" id="c_sonnet" autocomplete="off" placeholder="可空" list="dl_models_claude"></label>
+<label>haiku 模型 <input type="text" id="c_haiku" autocomplete="off" placeholder="可空" list="dl_models_claude"></label>
+<label>fable 模型 <input type="text" id="c_fable" autocomplete="off" placeholder="可空" list="dl_models_claude"></label>
+<datalist id="dl_models_claude"></datalist>
 <label>key 模式 <select id="c_mode"><option value="helper">helper（默认，key 不落盘）</option><option value="plain">plain（key 明文写进 settings 文件）</option></select></label>
 <label>附加环境变量（每行 名=值，名字不能含 KEY/TOKEN/SECRET）<br><textarea id="c_env" rows="3" cols="60" autocomplete="off"></textarea></label>
 <label>key <input type="password" id="c_key" autocomplete="new-password"> <span id="ckeyHint" class="mut">必填</span></label>
@@ -158,8 +161,45 @@ async function models(s){
   if(ids && ids.length) show(`source ${s.name} 共 ${ids.length} 个模型：\n  ` + ids.join("\n  "), true);
   else show(`source ${s.name} 的 /models 原始响应：\n` + text, true);
 }
+// 从上游获取模型（表单用）：已保存的 source 用服务端凭据管理器里的 key；新 source 用表单里输入的 base_url 和 key（只用于这一次请求）。
+// 结果放进 datalist（输入框仍可手填）和下拉框。
+function clearProbe(tool){
+  const c = tool==="claude";
+  $(c?"dl_models_claude":"dl_models_codex").innerHTML = "";
+  $(c?"c_probe":"f_probe").textContent = "";
+  if(c){ $("c_pick").innerHTML = ""; $("c_pickRow").style.display = "none"; }
+  else{ $("f_pick").innerHTML = ""; $("f_pick").style.display = "none"; }
+}
+async function probeModels(tool){
+  const c = tool==="claude";
+  const editName = c ? cediting : editing;
+  const base = $(c?"c_base":"f_base").value.trim();
+  const key = $(c?"c_key":"f_key").value.trim();
+  const tip = $(c?"c_probe":"f_probe");
+  if(!editName && (!base || !key)){ tip.className="err"; tip.textContent="新 source 要先填 base_url 和 key"; return; }
+  tip.className="mut"; tip.textContent="获取中…（最多 30 秒）";
+  const [r,d] = await post("/api/models/probe", {tool, name: editName, base_url: base, key});
+  if(!r.ok){
+    const why = {unauthorized:"key 被上游拒绝（HTTP "+(d.http_status||"401/403")+"）", timeout:"请求上游超时", http:"上游返回 HTTP "+(d.http_status||"?"), network:"连不上上游"}[d.reason] || errText(d);
+    tip.className="err"; tip.textContent=why;
+    show("获取模型失败："+why+"\n"+(d.error||"")+(d.url?"\n地址："+d.url:""), false); return;
+  }
+  const ids = d.ids||[];
+  $(c?"dl_models_claude":"dl_models_codex").innerHTML = ids.map(id=>`<option value="${esc(id)}"></option>`).join("");
+  const opts = `<option value="">（选一个模型）</option>` + ids.map(id=>`<option value="${esc(id)}">${esc(id)}</option>`).join("");
+  if(c){ $("c_pick").innerHTML = opts; $("c_pickRow").style.display = ids.length?"":"none"; }
+  else{ $("f_pick").innerHTML = opts; $("f_pick").style.display = ids.length?"":"none"; }
+  if(d.nonstandard){
+    tip.className="warn"; tip.textContent="上游响应不是常见格式，没解析出模型，请手填";
+    show(`${d.url} 的原始响应（不是常见的 /models 格式）：\n${d.raw}`, false); return;
+  }
+  tip.className = ids.length ? "ok" : "warn";
+  tip.textContent = ids.length ? `取到 ${ids.length} 个模型：在下拉框里选，或在输入框里选/手填` : "上游返回了空列表，请手填";
+  show(`${d.url}：${ids.length} 个模型\n  `+ids.join("\n  "), true);
+}
 function resetForm(){
   editing = "";
+  clearProbe("codex");
   $("formTitle").textContent = "新增 custom source（API）";
   $("f_name").value = ""; $("f_name").readOnly = false;
   $("f_base").value = ""; $("f_model").value = ""; $("f_key").value = "";
@@ -167,6 +207,7 @@ function resetForm(){
 }
 function startEdit(s){
   editing = s.name;
+  clearProbe("codex");
   $("formTitle").textContent = "编辑 custom source：" + s.name + "（不能改名）";
   $("f_name").value = s.name; $("f_name").readOnly = true;
   $("f_base").value = s.base_url||""; $("f_model").value = s.model||""; $("f_key").value = "";
@@ -239,6 +280,7 @@ function renderClaude(c){
 }
 function cresetForm(){
   cediting = "";
+  clearProbe("claude");
   $("cformTitle").textContent = "新增 claude source";
   $("c_name").value = ""; $("c_name").readOnly = false;
   for(const id of ["c_base","c_model","c_opus","c_sonnet","c_haiku","c_fable","c_env","c_key"]) $(id).value = "";
@@ -247,6 +289,7 @@ function cresetForm(){
 }
 function cstartEdit(s){
   cediting = s.name;
+  clearProbe("claude");
   const m = s.models||{};
   $("cformTitle").textContent = "编辑 claude source：" + s.name + "（不能改名）";
   $("c_name").value = s.name; $("c_name").readOnly = true;

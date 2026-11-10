@@ -59,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/source/edit", s.sourceEdit)
 	mux.HandleFunc("POST /api/source/delete", s.sourceDelete)
 	mux.HandleFunc("POST /api/source/models", s.sourceModels)
+	mux.HandleFunc("POST /api/models/probe", s.modelsProbe)
 	mux.HandleFunc("POST /api/claude/add", s.claudeAdd)
 	mux.HandleFunc("POST /api/claude/edit", s.claudeEdit)
 	mux.HandleFunc("POST /api/claude/export", s.claudeExport)
