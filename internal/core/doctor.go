@@ -74,8 +74,13 @@ func (a *App) Doctor() (rep DoctorReport) {
 	if err != nil {
 		add("sources", "error", "读 source 失败：%v", err)
 	}
+	nClaude := 0
 	for _, s := range srcs {
 		name := "source:" + s.Name
+		if s.Meta.IsClaude() {
+			nClaude++
+			continue // 在下面的 claude 部分检查
+		}
 		switch {
 		case !s.HasLogin && s.Meta.Type == config.ProviderCustom:
 			add(name, "error", "custom source %s 在凭据管理器里没有 key（%s）", s.Name, "acsw/codex/"+s.Name)
@@ -84,6 +89,10 @@ func (a *App) Doctor() (rep DoctorReport) {
 		default:
 			add(name, "ok", "%s source %s 登录/key 正常", s.Meta.Type, s.Name)
 		}
+	}
+
+	if nClaude > 0 {
+		a.doctorClaude(add)
 	}
 
 	// 运行登记：先数登记文件，再清理已退出的

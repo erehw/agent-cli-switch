@@ -43,7 +43,9 @@ type StatusReport struct {
 	AcswVersion string         `json:"acsw_version"` // acsw 程序版本
 	Codex       CodexInfo      `json:"codex"`        // acsw codex 会用的 codex
 	Homes       []StatusHome   `json:"homes"`
-	Sources     []StatusSource `json:"sources"`
+	Sources     []StatusSource `json:"sources"` // 只含 codex 的 source；claude source 在 claude.sources
+	// 后加的（version 仍为 1）：Claude Code 的 source 和 settings 文件
+	Claude ClaudeStatus `json:"claude"`
 }
 
 // StatusReport 汇总 home 和 source，供 status --json 使用。
@@ -60,6 +62,9 @@ func (a *App) StatusReport() (StatusReport, error) {
 	}
 	byName := map[string]StatusSource{}
 	for _, s := range srcs {
+		if s.Meta.IsClaude() {
+			continue
+		}
 		v := StatusSource{Name: s.Name, Type: s.Meta.Type, BaseURL: s.Meta.BaseURL, Model: s.Meta.Model, HasLogin: s.HasLogin, UsedBy: s.UsedBy}
 		if v.UsedBy == nil {
 			v.UsedBy = []string{}
@@ -82,6 +87,9 @@ func (a *App) StatusReport() (StatusReport, error) {
 			v.HasLogin = &hl
 		}
 		rep.Homes = append(rep.Homes, v)
+	}
+	if rep.Claude, err = a.ClaudeStatus(); err != nil {
+		return rep, err
 	}
 	return rep, nil
 }
