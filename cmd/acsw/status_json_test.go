@@ -50,6 +50,9 @@ func TestStatusJSON(t *testing.T) {
 	dec.DisallowUnknownFields()
 	var rep core.StatusReport
 	tu.Must(t, dec.Decode(&rep))
+	if rep.RootFrom == "" || rep.Codex.From == "" && rep.Codex.Error == "" {
+		t.Fatal("root_from / codex", out.String())
+	}
 	if rep.Version != 1 || rep.Root != p.Root || len(rep.Homes) != 2 || len(rep.Sources) != 4 {
 		t.Fatal(out.String())
 	}

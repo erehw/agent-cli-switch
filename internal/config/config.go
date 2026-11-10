@@ -34,6 +34,14 @@ func Root() (string, error) {
 	return filepath.Join(h, "agent-source", "codex"), nil
 }
 
+// RootFrom 说明根目录从哪来："env"（环境变量 ACSW_ROOT）或 "default"（~/agent-source/codex）。
+func RootFrom() string {
+	if strings.TrimSpace(os.Getenv("ACSW_ROOT")) != "" {
+		return "env"
+	}
+	return "default"
+}
+
 // Paths 是根目录下各位置的计算器。
 type Paths struct{ Root string }
 

@@ -67,6 +67,7 @@ const usage = `acsw %s — agent cli switch（别名 code switch）
   acsw run [codex] [...]                       # 等同 acsw codex（兼容旧用法）
   acsw last [--home <home>] [-n 5]
   acsw status [--json]                         # --json：稳定的 JSON（见 README），不含 key
+  acsw doctor [--json]                         # 体检：根目录、map、codex、各 source 的 key/登录、home、项目目录；有 error 时退出码 1
   acsw ui [--port 7799] [--open]
   acsw version
 
@@ -86,6 +87,7 @@ func realMain(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	app.Version = versionString()
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Printf(usage, versionString(), app.Paths.Root)
 		return 0
@@ -197,6 +199,12 @@ func realMain(args []string) int {
 		}
 		fmt.Printf("接续：acsw codex resume %s\n", r.Threads[0].ID)
 		return 0
+	case "doctor":
+		f, pos, _, err := parseArgs(rest, nil, set("json"))
+		if err != nil || len(pos) != 0 {
+			return fail(core.Usage("用法：acsw doctor [--json]"))
+		}
+		return doctor(app, f["json"] != "", os.Stdout)
 	case "status":
 		sf, _, _, err := parseArgs(rest, nil, set("json"))
 		if err != nil {
@@ -715,4 +723,28 @@ func errorJSON(code int, kind, msg string, f exitcode.F) []byte {
 		out = append(out, '}')
 	}
 	return append(out, '\n')
+}
+
+// doctor 打印体检结果。没有 error 级问题时返回 0，否则返回 1（这是体检结论，不是 acsw 出错，所以不用 9999xxxx）。
+func doctor(app *core.App, asJSON bool, w io.Writer) int {
+	rep := app.Doctor()
+	if asJSON {
+		b, _ := json.MarshalIndent(rep, "", "  ")
+		fmt.Fprintln(w, string(b))
+	} else {
+		fmt.Fprintf(w, "acsw %s  根目录 %s（来源：%s）\n", rep.Env.Version, rep.Env.Root, rep.Env.RootFrom)
+		mark := map[string]string{"ok": "[ok]   ", "warn": "[warn] ", "error": "[error]"}
+		for _, c := range rep.Checks {
+			fmt.Fprintf(w, "%s %s：%s\n", mark[c.Level], c.Name, c.Msg)
+		}
+		if rep.OK {
+			fmt.Fprintln(w, "结论：没有发现错误")
+		} else {
+			fmt.Fprintln(w, "结论：有错误，见上面的 [error]")
+		}
+	}
+	if rep.OK {
+		return 0
+	}
+	return 1
 }

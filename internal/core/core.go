@@ -45,7 +45,8 @@ type App struct {
 	Stderr    io.Writer
 	Environ   func() []string // 默认 os.Environ
 	Hook      func(step string) error
-	CI        bool // 路径比较是否忽略大小写
+	CI        bool   // 路径比较是否忽略大小写
+	Version   string // acsw 版本（main 注入，只用于显示）
 }
 
 // New 用真实系统依赖建 App。

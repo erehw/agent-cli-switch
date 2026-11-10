@@ -36,15 +36,20 @@ type StatusSource struct {
 
 // StatusReport 是 acsw status --json 的完整输出。不含任何 key 或 auth.json 内容。
 type StatusReport struct {
-	Version int            `json:"version"`
-	Root    string         `json:"root"`
-	Homes   []StatusHome   `json:"homes"`
-	Sources []StatusSource `json:"sources"`
+	Version int    `json:"version"`
+	Root    string `json:"root"`
+	// 以下三项是后加的（version 仍为 1）
+	RootFrom    string         `json:"root_from"`    // "env"（ACSW_ROOT）或 "default"
+	AcswVersion string         `json:"acsw_version"` // acsw 程序版本
+	Codex       CodexInfo      `json:"codex"`        // acsw codex 会用的 codex
+	Homes       []StatusHome   `json:"homes"`
+	Sources     []StatusSource `json:"sources"`
 }
 
 // StatusReport 汇总 home 和 source，供 status --json 使用。
 func (a *App) StatusReport() (StatusReport, error) {
-	rep := StatusReport{Version: StatusJSONVersion, Root: a.Paths.Root, Homes: []StatusHome{}, Sources: []StatusSource{}}
+	env := a.Env()
+	rep := StatusReport{Version: StatusJSONVersion, Root: a.Paths.Root, RootFrom: env.RootFrom, AcswVersion: env.Version, Codex: env.Codex, Homes: []StatusHome{}, Sources: []StatusSource{}}
 	st, err := a.Status()
 	if err != nil {
 		return rep, err
